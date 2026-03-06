@@ -1,0 +1,359 @@
+<?xml version="1.0"?>
+<!--
+  robot_arm.urdf  —  Gazebo Harmonic + ROS 2 Jazzy
+  Joints: base_yaw, shoulder_roll (±45°), shoulder_pitch, elbow_pitch
+  Gripper: 3 fingers curling inward
+-->
+<robot name="robot_arm">
+
+  <!-- ============================================================
+       MATERIALS (RViz)
+  ============================================================ -->
+  <material name="dark_grey"> <color rgba="0.2 0.2 0.2 1.0"/> </material>
+  <material name="light_grey"> <color rgba="0.7 0.7 0.7 1.0"/> </material>
+  <material name="orange">     <color rgba="0.9 0.4 0.0 1.0"/> </material>
+
+  <!-- ============================================================
+       ros2_control block — Gazebo Harmonic hardware interface
+  ============================================================ -->
+  <ros2_control name="GazeboSystem" type="system">
+    <hardware>
+      <plugin>gz_ros2_control/GazeboSimSystem</plugin>
+    </hardware>
+
+    <joint name="base_yaw">
+      <command_interface name="position">
+        <param name="min">-3.1416</param>
+        <param name="max"> 3.1416</param>
+      </command_interface>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+
+    <joint name="shoulder_roll">
+      <command_interface name="position">
+        <param name="min">-0.7854</param>
+        <param name="max"> 0.7854</param>
+      </command_interface>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+
+    <joint name="shoulder_pitch">
+      <command_interface name="position">
+        <param name="min">-1.5708</param>
+        <param name="max"> 2.3562</param>
+      </command_interface>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+
+    <joint name="elbow_pitch">
+      <command_interface name="position">
+        <param name="min">-2.0944</param>
+        <param name="max"> 2.0944</param>
+      </command_interface>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+
+    <joint name="finger_1_joint">
+      <command_interface name="position">
+        <param name="min">-1.2217</param>
+        <param name="max">0.0</param>
+      </command_interface>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+
+    <joint name="finger_2_joint">
+      <command_interface name="position">
+        <param name="min">-1.2217</param>
+        <param name="max">0.0</param>
+      </command_interface>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+
+    <joint name="finger_3_joint">
+      <command_interface name="position">
+        <param name="min">-1.2217</param>
+        <param name="max">0.0</param>
+      </command_interface>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+  </ros2_control>
+
+  <!-- ============================================================
+       LINKS
+  ============================================================ -->
+
+  <link name="world"/>
+
+  <link name="base_link">
+    <visual>
+      <origin xyz="0 0 0.03" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.06" length="0.06"/></geometry>
+      <material name="dark_grey"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.03" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.06" length="0.06"/></geometry>
+    </collision>
+    <inertial>
+      <mass value="0.5"/>
+      <origin xyz="0 0 0.03"/>
+      <inertia ixx="0.000788" iyy="0.000788" izz="0.000900"
+               ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+
+  <link name="shoulder_roll_link">
+    <visual>
+      <origin xyz="0 0 0.02" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.025" length="0.04"/></geometry>
+      <material name="dark_grey"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.02" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.025" length="0.04"/></geometry>
+    </collision>
+    <inertial>
+      <mass value="0.08"/>
+      <origin xyz="0 0 0.02"/>
+      <inertia ixx="0.000010" iyy="0.000010" izz="0.000025"
+               ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+
+  <link name="upper_arm">
+    <visual>
+      <origin xyz="0 0 0.10" rpy="0 0 0"/>
+      <geometry><box size="0.04 0.04 0.20"/></geometry>
+      <material name="light_grey"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.10" rpy="0 0 0"/>
+      <geometry><box size="0.04 0.04 0.20"/></geometry>
+    </collision>
+    <inertial>
+      <mass value="0.3"/>
+      <origin xyz="0 0 0.10"/>
+      <inertia ixx="0.001017" iyy="0.001017" izz="0.000016"
+               ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+
+  <link name="forearm">
+    <visual>
+      <origin xyz="0 0 0.09" rpy="0 0 0"/>
+      <geometry><box size="0.035 0.035 0.18"/></geometry>
+      <material name="light_grey"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.09" rpy="0 0 0"/>
+      <geometry><box size="0.035 0.035 0.18"/></geometry>
+    </collision>
+    <inertial>
+      <mass value="0.25"/>
+      <origin xyz="0 0 0.09"/>
+      <inertia ixx="0.000682" iyy="0.000682" izz="0.000013"
+               ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+
+  <link name="wrist_link">
+    <visual>
+      <origin xyz="0 0 0.025" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.03" length="0.05"/></geometry>
+      <material name="dark_grey"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.025" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.03" length="0.05"/></geometry>
+    </collision>
+    <inertial>
+      <mass value="0.1"/>
+      <origin xyz="0 0 0.025"/>
+      <inertia ixx="0.000027" iyy="0.000027" izz="0.000045"
+               ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+
+  <link name="finger_1">
+    <visual>
+      <origin xyz="0 0 0.030" rpy="0 0 0"/>
+      <geometry><box size="0.015 0.010 0.060"/></geometry>
+      <material name="orange"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.030" rpy="0 0 0"/>
+      <geometry><box size="0.015 0.010 0.060"/></geometry>
+    </collision>
+    <inertial>
+      <mass value="0.03"/>
+      <origin xyz="0 0 0.030"/>
+      <inertia ixx="0.000009" iyy="0.000009" izz="0.000001"
+               ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+
+  <link name="finger_2">
+    <visual>
+      <origin xyz="0 0 0.030" rpy="0 0 0"/>
+      <geometry><box size="0.015 0.010 0.060"/></geometry>
+      <material name="orange"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.030" rpy="0 0 0"/>
+      <geometry><box size="0.015 0.010 0.060"/></geometry>
+    </collision>
+    <inertial>
+      <mass value="0.03"/>
+      <origin xyz="0 0 0.030"/>
+      <inertia ixx="0.000009" iyy="0.000009" izz="0.000001"
+               ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+
+  <link name="finger_3">
+    <visual>
+      <origin xyz="0 0 0.030" rpy="0 0 0"/>
+      <geometry><box size="0.015 0.010 0.060"/></geometry>
+      <material name="orange"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.030" rpy="0 0 0"/>
+      <geometry><box size="0.015 0.010 0.060"/></geometry>
+    </collision>
+    <inertial>
+      <mass value="0.03"/>
+      <origin xyz="0 0 0.030"/>
+      <inertia ixx="0.000009" iyy="0.000009" izz="0.000001"
+               ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+
+  <link name="tool0"/>
+
+  <!-- ============================================================
+       JOINTS
+  ============================================================ -->
+
+  <joint name="world_to_base" type="fixed">
+    <parent link="world"/>
+    <child  link="base_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <joint name="base_yaw" type="revolute">
+    <parent link="base_link"/>
+    <child  link="shoulder_roll_link"/>
+    <origin xyz="0 0 0.06" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-3.1416" upper="3.1416" effort="10.0" velocity="1.0"/>
+    <dynamics damping="0.1" friction="0.05"/>
+  </joint>
+
+  <joint name="shoulder_roll" type="revolute">
+    <parent link="shoulder_roll_link"/>
+    <child  link="upper_arm"/>
+    <origin xyz="0 0 0.04" rpy="0 0 0"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-0.7854" upper="0.7854" effort="10.0" velocity="1.0"/>
+    <dynamics damping="0.1" friction="0.05"/>
+  </joint>
+
+  <joint name="shoulder_pitch" type="revolute">
+    <parent link="upper_arm"/>
+    <child  link="forearm"/>
+    <origin xyz="0 0 0.20" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-1.5708" upper="2.3562" effort="8.0" velocity="1.0"/>
+    <dynamics damping="0.1" friction="0.05"/>
+  </joint>
+
+  <joint name="elbow_pitch" type="revolute">
+    <parent link="forearm"/>
+    <child  link="wrist_link"/>
+    <origin xyz="0 0 0.18" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-2.0944" upper="2.0944" effort="5.0" velocity="1.5"/>
+    <dynamics damping="0.08" friction="0.04"/>
+  </joint>
+
+  <joint name="finger_1_joint" type="revolute">
+    <parent link="wrist_link"/>
+    <child  link="finger_1"/>
+    <origin xyz="0.035 0.000 0.05" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-1.2217" upper="0.0" effort="2.0" velocity="2.0"/>
+    <dynamics damping="0.05" friction="0.02"/>
+  </joint>
+
+  <joint name="finger_2_joint" type="revolute">
+    <parent link="wrist_link"/>
+    <child  link="finger_2"/>
+    <origin xyz="-0.018 0.030 0.05" rpy="0 0 2.0944"/>
+    <axis xyz="0.866 0.5 0"/>
+    <limit lower="-1.2217" upper="0.0" effort="2.0" velocity="2.0"/>
+    <dynamics damping="0.05" friction="0.02"/>
+  </joint>
+
+  <joint name="finger_3_joint" type="revolute">
+    <parent link="wrist_link"/>
+    <child  link="finger_3"/>
+    <origin xyz="-0.018 -0.030 0.05" rpy="0 0 4.1888"/>
+    <axis xyz="0.866 -0.5 0"/>
+    <limit lower="-1.2217" upper="0.0" effort="2.0" velocity="2.0"/>
+    <dynamics damping="0.05" friction="0.02"/>
+  </joint>
+
+  <joint name="wrist_to_tool0" type="fixed">
+    <parent link="wrist_link"/>
+    <child  link="tool0"/>
+    <origin xyz="0 0 0.11" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ============================================================
+       GAZEBO — per-link material + friction
+  ============================================================ -->
+  <gazebo reference="base_link">
+    <material>Gazebo/DarkGrey</material>
+    <mu1>0.8</mu1><mu2>0.8</mu2>
+  </gazebo>
+  <gazebo reference="shoulder_roll_link">
+    <material>Gazebo/DarkGrey</material>
+  </gazebo>
+  <gazebo reference="upper_arm">
+    <material>Gazebo/Grey</material>
+  </gazebo>
+  <gazebo reference="forearm">
+    <material>Gazebo/Grey</material>
+  </gazebo>
+  <gazebo reference="wrist_link">
+    <material>Gazebo/DarkGrey</material>
+  </gazebo>
+  <gazebo reference="finger_1">
+    <material>Gazebo/Orange</material>
+    <mu1>1.2</mu1><mu2>1.2</mu2>
+  </gazebo>
+  <gazebo reference="finger_2">
+    <material>Gazebo/Orange</material>
+    <mu1>1.2</mu1><mu2>1.2</mu2>
+  </gazebo>
+  <gazebo reference="finger_3">
+    <material>Gazebo/Orange</material>
+    <mu1>1.2</mu1><mu2>1.2</mu2>
+  </gazebo>
+
+  <!-- gz_ros2_control plugin -->
+  <gazebo>
+    <plugin filename="gz_ros2_control-system"
+            name="gz_ros2_control::GazeboSimROS2ControlPlugin">
+      <parameters>$(find robot_arm_description)/config/controllers.yaml</parameters>
+    </plugin>
+  </gazebo>
+
+</robot>
