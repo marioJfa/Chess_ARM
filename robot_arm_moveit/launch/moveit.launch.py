@@ -45,7 +45,7 @@ def generate_launch_description():
         output='screen',
         parameters=[
             {'robot_description': urdf},
-            {'use_sim_time': False},
+            {'use_sim_time': True},
         ]
     )
 
@@ -59,7 +59,7 @@ def generate_launch_description():
             {'robot_description': urdf},
             {'robot_description_semantic': srdf},
             {'robot_description_kinematics': kinematics},
-            {'use_sim_time': False},
+            {'use_sim_time': True},
         ]
     )
 

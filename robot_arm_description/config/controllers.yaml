@@ -13,7 +13,7 @@ controller_manager:
 
 arm_controller:
   ros__parameters:
-    use_sim_time: false
+    use_sim_time: true
     joints:
       - base_yaw
       - shoulder_roll
@@ -35,7 +35,7 @@ arm_controller:
 
 gripper_controller:
   ros__parameters:
-    use_sim_time: false
+    use_sim_time: true
     joints:
       - finger_1_joint
       - finger_2_joint

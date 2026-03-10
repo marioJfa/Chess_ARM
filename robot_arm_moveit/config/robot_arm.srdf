@@ -1,54 +1,19 @@
 <?xml version="1.0" ?>
-<!--
-  robot_arm.srdf
-  Semantic Robot Description Format — MoveIt 2 planning configuration
-  Companion to robot_arm.urdf — does NOT replace it, layers on top.
-
-  Planning groups:
-    arm     → 4 joints: base_yaw, shoulder_roll, shoulder_pitch, elbow_pitch
-    gripper → 3 joints: finger_1_joint, finger_2_joint, finger_3_joint
-
-  End effector: tool0 (defined as fixed frame in URDF)
-  IK tip link: tool0
--->
 <robot name="robot_arm">
 
-  <!-- ============================================================
-       PLANNING GROUPS
-       Define which joints MoveIt plans for together.
-  ============================================================ -->
-
-  <!-- ARM group — 4 DOF, plans Cartesian paths to tool0 -->
+  <!-- ARM group — chain from base to tool0, MoveIt uses tool0 as IK tip -->
   <group name="arm">
-    <joint name="base_yaw"/>
-    <joint name="shoulder_roll"/>
-    <joint name="shoulder_pitch"/>
-    <joint name="elbow_pitch"/>
+    <chain base_link="base_link" tip_link="tool0"/>
   </group>
 
-  <!-- GRIPPER group — 3 fingers, planned separately -->
+  <!-- GRIPPER group — 3 fingers commanded separately -->
   <group name="gripper">
     <joint name="finger_1_joint"/>
     <joint name="finger_2_joint"/>
     <joint name="finger_3_joint"/>
   </group>
 
-  <!-- ============================================================
-       END EFFECTOR
-       Links MoveIt's IK solver to the tool0 frame.
-       Parent group = arm, component group = gripper.
-  ============================================================ -->
-  <end_effector name="gripper_ee"
-                parent_link="tool0"
-                group="gripper"
-                parent_group="arm"/>
-
-  <!-- ============================================================
-       NAMED POSES
-       Stored joint configurations accessible by name in MoveIt.
-  ============================================================ -->
-
-  <!-- Home — all joints at zero -->
+  <!-- NAMED POSES -->
   <group_state name="home" group="arm">
     <joint name="base_yaw"       value="0"/>
     <joint name="shoulder_roll"  value="0"/>
@@ -56,7 +21,6 @@
     <joint name="elbow_pitch"    value="0"/>
   </group_state>
 
-  <!-- Reach forward — arm extended in front -->
   <group_state name="reach" group="arm">
     <joint name="base_yaw"       value="0"/>
     <joint name="shoulder_roll"  value="0"/>
@@ -64,7 +28,6 @@
     <joint name="elbow_pitch"    value="-0.524"/>
   </group_state>
 
-  <!-- Pick pose — pitched down toward ground plane -->
   <group_state name="pick" group="arm">
     <joint name="base_yaw"       value="0.524"/>
     <joint name="shoulder_roll"  value="0.175"/>
@@ -72,30 +35,19 @@
     <joint name="elbow_pitch"    value="-0.873"/>
   </group_state>
 
-  <!-- Gripper open -->
   <group_state name="open" group="gripper">
     <joint name="finger_1_joint" value="0"/>
     <joint name="finger_2_joint" value="0"/>
     <joint name="finger_3_joint" value="0"/>
   </group_state>
 
-  <!-- Gripper closed -->
   <group_state name="closed" group="gripper">
     <joint name="finger_1_joint" value="1.2217"/>
     <joint name="finger_2_joint" value="1.2217"/>
     <joint name="finger_3_joint" value="1.2217"/>
   </group_state>
 
-  <!-- ============================================================
-       PASSIVE JOINTS
-       Joints that MoveIt should not command (none here).
-  ============================================================ -->
-
-  <!-- ============================================================
-       DISABLE COLLISIONS
-       Adjacent links always intersect — skip checking them.
-       Generated from the kinematic chain.
-  ============================================================ -->
+  <!-- DISABLE COLLISIONS -->
   <disable_collisions link1="world"              link2="base_link"          reason="Adjacent"/>
   <disable_collisions link1="base_link"          link2="shoulder_roll_link" reason="Adjacent"/>
   <disable_collisions link1="shoulder_roll_link" link2="upper_arm"          reason="Adjacent"/>
@@ -105,8 +57,6 @@
   <disable_collisions link1="wrist_link"         link2="finger_2"           reason="Adjacent"/>
   <disable_collisions link1="wrist_link"         link2="finger_3"           reason="Adjacent"/>
   <disable_collisions link1="wrist_link"         link2="tool0"              reason="Adjacent"/>
-
-  <!-- Non-adjacent but permanently non-colliding due to geometry -->
   <disable_collisions link1="base_link"          link2="upper_arm"          reason="Never"/>
   <disable_collisions link1="shoulder_roll_link" link2="forearm"            reason="Never"/>
   <disable_collisions link1="finger_1"           link2="finger_2"           reason="Never"/>
