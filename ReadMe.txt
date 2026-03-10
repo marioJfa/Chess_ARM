@@ -81,3 +81,6 @@ ros2 topic pub /arm_controller/joint_trajectory \
 
         --python script
 
+##v0.4.2 
+
+        --adding the camera 

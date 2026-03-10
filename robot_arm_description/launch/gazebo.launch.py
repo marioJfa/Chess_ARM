@@ -54,7 +54,7 @@ def generate_launch_description():
         ]
     )
 
-    # 4. ROS-Gazebo bridge — clock
+    # 4. ROS-Gazebo bridge — clock + camera
     bridge = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
@@ -62,6 +62,11 @@ def generate_launch_description():
         output='screen',
         arguments=[
             '/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock',
+            '/camera/image@sensor_msgs/msg/Image[gz.msgs.Image',
+            '/camera/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo',
+        ],
+        remappings=[
+            ('/camera/image', '/camera/image_raw'),
         ]
     )
 
