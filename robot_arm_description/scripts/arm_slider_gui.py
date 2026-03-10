@@ -29,9 +29,9 @@ ARM_JOINTS = [
 ]
 
 GRIPPER_JOINTS = [
-    ('finger_1_joint', 0, 70, 0, 'deg'),
-    ('finger_2_joint', 0, 70, 0, 'deg'),
-    ('finger_3_joint', 0, 70, 0, 'deg'),
+    ('finger_1_joint', -70, 0, 0, 'deg'),
+    ('finger_2_joint', -70, 0, 0, 'deg'),
+    ('finger_3_joint', -70, 0, 0, 'deg'),
 ]
 
 PRESETS = {
@@ -39,7 +39,7 @@ PRESETS = {
     'Reach':       {'base_yaw': 0,   'shoulder_roll': 0,  'shoulder_pitch': 60,  'elbow_pitch': -30, 'finger_1_joint': 0,  'finger_2_joint': 0,  'finger_3_joint': 0},
     'Pick':        {'base_yaw': 30,  'shoulder_roll': 10, 'shoulder_pitch': 70,  'elbow_pitch': -50, 'finger_1_joint': 60, 'finger_2_joint': 60, 'finger_3_joint': 60},
     'Wave':        {'base_yaw': 45,  'shoulder_roll': 0,  'shoulder_pitch': 90,  'elbow_pitch': -90, 'finger_1_joint': 0,  'finger_2_joint': 0,  'finger_3_joint': 0},
-    'Grip Close':  {'finger_1_joint': 70, 'finger_2_joint': 70, 'finger_3_joint': 70},
+    'Grip Close':  {'finger_1_joint': -25, 'finger_2_joint': -25, 'finger_3_joint': -25},
     'Grip Open':   {'finger_1_joint': 0,  'finger_2_joint': 0,  'finger_3_joint': 0},
 }
 

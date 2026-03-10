@@ -288,7 +288,7 @@
     <child  link="finger_1"/>
     <origin xyz="0.035 0.000 0.05" rpy="0 0 0"/>
     <axis xyz="0 1 0"/>
-    <limit lower="0.0" upper="1.2217" effort="2.0" velocity="2.0"/>
+    <limit lower="-1.2217" upper="0.0" effort="2.0" velocity="2.0"/>
     <dynamics damping="0.05" friction="0.02"/>
   </joint>
 
@@ -297,7 +297,7 @@
     <child  link="finger_2"/>
     <origin xyz="-0.018 0.030 0.05" rpy="0 0 2.0944"/>
     <axis xyz="0 1 0"/>
-    <limit lower="0.0" upper="1.2217" effort="2.0" velocity="2.0"/>
+    <limit lower="-1.2217" upper="0.0" effort="2.0" velocity="2.0"/>
     <dynamics damping="0.05" friction="0.02"/>
   </joint>
 
@@ -306,7 +306,7 @@
     <child  link="finger_3"/>
     <origin xyz="-0.018 -0.030 0.05" rpy="0 0 4.1888"/>
     <axis xyz="0 1 0"/>
-    <limit lower="0.0" upper="1.2217" effort="2.0" velocity="2.0"/>
+    <limit lower="-1.2217" upper="0.0" effort="2.0" velocity="2.0"/>
     <dynamics damping="0.05" friction="0.02"/>
   </joint>
 
