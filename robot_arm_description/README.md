@@ -105,7 +105,14 @@ check_urdf ~/ros2_ws/src/robot_arm_description/urdf/robot_arm.urdf
 
 ## Sending Commands
 
-### Move arm joints (radians)
+### Slider GUI controller (recommended)
+```bash
+# In a second terminal while Gazebo is running
+ros2 run robot_arm_description arm_slider_gui.py
+```
+Sliders for all joints in degrees, adjustable move duration, and preset buttons.
+
+### Move arm joints (terminal)
 ```bash
 ros2 topic pub /arm_controller/joint_trajectory \
   trajectory_msgs/msg/JointTrajectory \
@@ -174,7 +181,74 @@ ros2 topic list
 
 ## Changelog
 
-### v0.3 — Gazebo Harmonic integration
+### v0.4 — All-Y-axis joints + slider GUI controller
+- Changed `shoulder_roll` joint axis from X → Y (now pitches forward/back like all other joints)
+- Changed `finger_2_joint` axis from `0.866 0.5 0` → `0 1 0`
+- Changed `finger_3_joint` axis from `0.866 -0.5 0` → `0 1 0`
+- All joints except `base_yaw` now rotate around Y axis consistently
+- Added `scripts/joint_slider_controller.py` — tkinter-based slider GUI
+  - Separate sliders for all 4 arm joints and 3 gripper fingers
+  - Live publishing on every slider move (no need to click Send)
+  - 5 presets: HOME, REACH, PICK READY, CLOSE GRIP, OPEN GRIP
+  - Status bar shows last sent positions
+- Added scripts to `CMakeLists.txt` install targets
+
+### v0.4.1 — Joint axis and finger curl fixes
+- `shoulder_roll` joint origin: added `rpy="1.5708 0 0"` so local Y axis aligns with forward/back pitch direction instead of side-to-side roll
+- All finger joints: flipped limits from `lower=-1.2217, upper=0` to `lower=0, upper=+1.2217` — positive rotation now curls fingers inward toward wrist center (right-hand rule around local Y)
+- Updated `ros2_control` command interface min/max to match new finger limits
+- Updated slider GUI finger range from `(-70, 0)` to `(0, 70)` and preset values accordingly
+
+### v0.4.0 — Slider GUI controller
+- Added `scripts/arm_slider_gui.py` — tkinter-based joint position slider panel
+- Sliders for all 4 arm joints (degrees) + 3 gripper fingers
+- Adjustable move duration (0.5s–5s)
+- 6 presets: Home, Reach, Pick, Wave, Grip Close, Grip Open
+- Publishes to `/arm_controller/joint_trajectory` and `/gripper_controller/joint_trajectory`
+- ROS spin runs in background thread so GUI stays responsive
+- All joints standardized to Y axis (pitch) — `shoulder_roll`, `shoulder_pitch`, `elbow_pitch`, all fingers now `axis xyz="0 1 0"`
+- `base_yaw` remains on Z axis
+
+### v0.3.6 — Controller timing fix
+- Set `use_sim_time: false` consistently across all nodes and controllers
+- Added `open_loop_control: true` to arm and gripper controllers — prevents position feedback from rejecting commands when sim clock is inconsistent
+- Added `allow_integration_in_goal_trajectories: true` — allows sending trajectories without velocity/acceleration fields
+- Set `stopped_velocity_tolerance: 0.0` — removes strict velocity check that was causing goal rejection
+- Root cause: trajectory timestamps were being compared against wrong clock source, causing immediate goal expiry and snap-back to zero
+
+### v0.3.5 — Clock bridge fix + first successful run
+- All 3 controllers loading and activating successfully in Gazebo Harmonic
+- Fixed `/clock` bridge — added world-scoped clock topic and `use_sim_time` to bridge node
+- `controller_manager` was running on wall clock due to missing sim clock — resolved
+
+### v0.3.4 — Hardware plugin architecture fix (patch)
+- Reverted standalone `ros2_control_node` approach — `gz_ros2_control/GazeboSimSystem` hardware plugin only exists inside Gazebo, not as a standalone ROS node
+- Restored in-Gazebo `libgz_ros2_control-system.so` plugin in URDF
+- Replaced `$(find ...)` xacro syntax with `CONTROLLERS_YAML_PATH` placeholder string
+- Launch file now does `urdf.replace('CONTROLLERS_YAML_PATH', controllers_file)` to inject the real absolute path at launch time
+- Added `GZ_SIM_SYSTEM_PLUGIN_PATH=/opt/ros/jazzy/lib` env var to Gazebo process so plugin `.so` is found
+- Removed standalone `controller_manager` node from launch (controller_manager is now created by the Gazebo plugin)
+
+### v0.3.3 — controller_manager topic fix (patch)
+- In ROS 2 Jazzy, `ros2_control_node` reads `robot_description` from the `/robot_description` **topic**, not a parameter
+- Removed `robot_description` from `controller_manager` parameter dict
+- Added `remappings=[('~/robot_description', '/robot_description')]` so it subscribes to `robot_state_publisher`'s topic
+- Added `use_sim_time: True` to `controller_manager`
+
+### v0.3.2 — Gazebo launch fixes (patch)
+- Removed `$(find ...)` xacro syntax from URDF plugin tag (invalid in plain URDF, caused params-file parse crash)
+- Removed `<parameters>` from URDF plugin block entirely
+- Switched from in-plugin controller loading to standalone `ros2_control_node` in launch file — more reliable with Jazzy + Gazebo Harmonic 8
+- `controllers_file` path now resolved in Python via `get_package_share_directory` and passed directly to `controller_manager` node
+- Added `TimerAction(5s)` before loading controllers to ensure `controller_manager` is ready
+
+### v0.3.1 — Inertia fix (patch)
+- Recalculated all link inertia tensors from first principles (geometry + mass)
+- Fixed `shoulder_roll_link` ixx/iyy: `0.000010` → `0.000023` (was causing Gazebo Error Code 19 invalid inertia)
+- Fixed `base_link`, `upper_arm`, `forearm`, `wrist_link` minor inertia errors
+- All values now computed as solid primitives: cylinder `ixx = (1/12)m(3r²+h²)`, box `ixx = (1/12)m(y²+z²)`
+
+
 - Added `<ros2_control>` hardware interface block to URDF
 - Added `<gazebo>` material and friction tags to all links
 - Added `gz_ros2_control` plugin to URDF

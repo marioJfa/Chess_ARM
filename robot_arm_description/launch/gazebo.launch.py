@@ -10,23 +10,25 @@ def generate_launch_description():
 
     pkg = get_package_share_directory('robot_arm_description')
 
-    urdf_file   = os.path.join(pkg, 'urdf',    'robot_arm.urdf')
-    world_file  = os.path.join(pkg, 'worlds',  'arm_world.sdf')
+    urdf_file        = os.path.join(pkg, 'urdf',   'robot_arm.urdf')
+    world_file       = os.path.join(pkg, 'worlds', 'arm_world.sdf')
+    controllers_file = os.path.join(pkg, 'config', 'controllers.yaml')
 
+    # Read URDF and inject the real controllers.yaml path at launch time.
+    # This replaces the PLACEHOLDER string we put in the URDF plugin block.
     with open(urdf_file, 'r') as f:
-        robot_description = f.read()
+        robot_description = f.read().replace(
+            'CONTROLLERS_YAML_PATH', controllers_file
+        )
 
-    # ----------------------------------------------------------------
-    # 1. Start Gazebo Harmonic with our world
-    # ----------------------------------------------------------------
+    # 1. Gazebo Harmonic
     gazebo = ExecuteProcess(
         cmd=['gz', 'sim', '-r', world_file],
+        additional_env={'GZ_SIM_SYSTEM_PLUGIN_PATH': '/opt/ros/jazzy/lib'},
         output='screen'
     )
 
-    # ----------------------------------------------------------------
-    # 2. robot_state_publisher — broadcasts TF from joint states
-    # ----------------------------------------------------------------
+    # 2. robot_state_publisher — publishes /robot_description topic
     robot_state_publisher = Node(
         package='robot_state_publisher',
         executable='robot_state_publisher',
@@ -34,13 +36,12 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'robot_description': robot_description,
-            'use_sim_time': True,
+            'use_sim_time': False,
         }]
     )
 
-    # ----------------------------------------------------------------
-    # 3. Spawn the robot into Gazebo
-    # ----------------------------------------------------------------
+    # 3. Spawn robot into Gazebo — the gz_ros2_control plugin inside the
+    #    URDF loads automatically when Gazebo processes the model.
     spawn_robot = Node(
         package='ros_gz_sim',
         executable='create',
@@ -49,15 +50,11 @@ def generate_launch_description():
         arguments=[
             '-name',  'robot_arm',
             '-topic', 'robot_description',
-            '-x', '0', '-y', '0', '-z', '0',
+            '-x', '0', '-y', '0', '-z', '0.001',
         ]
     )
 
-    # ----------------------------------------------------------------
-    # 4. Bridge — connects Gazebo topics to ROS 2 topics
-    #    Format: gz_topic@ros_type[gz_type  (gz->ros)
-    #            gz_topic@ros_type]gz_type  (ros->gz)
-    # ----------------------------------------------------------------
+    # 4. ROS-Gazebo bridge — clock
     bridge = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
@@ -65,38 +62,27 @@ def generate_launch_description():
         output='screen',
         arguments=[
             '/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock',
-            '/joint_states@sensor_msgs/msg/JointState[gz.msgs.Model',
         ]
     )
 
-    # ----------------------------------------------------------------
-    # 5. Load controllers (after robot is spawned)
-    # ----------------------------------------------------------------
+    # 5. Load controllers after spawn (gz_ros2_control creates
+    #    /controller_manager once the model is loaded in Gazebo)
     load_joint_state_broadcaster = ExecuteProcess(
-        cmd=['ros2', 'control', 'load_controller', '--set-state', 'active',
-             'joint_state_broadcaster'],
+        cmd=['ros2', 'control', 'load_controller',
+             '--set-state', 'active', 'joint_state_broadcaster'],
         output='screen'
     )
-
     load_arm_controller = ExecuteProcess(
-        cmd=['ros2', 'control', 'load_controller', '--set-state', 'active',
-             'arm_controller'],
+        cmd=['ros2', 'control', 'load_controller',
+             '--set-state', 'active', 'arm_controller'],
         output='screen'
     )
-
     load_gripper_controller = ExecuteProcess(
-        cmd=['ros2', 'control', 'load_controller', '--set-state', 'active',
-             'gripper_controller'],
+        cmd=['ros2', 'control', 'load_controller',
+             '--set-state', 'active', 'gripper_controller'],
         output='screen'
     )
 
-    # Chain: spawn → joint_state_broadcaster → arm_controller → gripper_controller
-    load_jsb_after_spawn = RegisterEventHandler(
-        event_handler=OnProcessExit(
-            target_action=spawn_robot,
-            on_exit=[load_joint_state_broadcaster]
-        )
-    )
     load_arm_after_jsb = RegisterEventHandler(
         event_handler=OnProcessExit(
             target_action=load_joint_state_broadcaster,
@@ -114,9 +100,9 @@ def generate_launch_description():
         gazebo,
         robot_state_publisher,
         bridge,
-        # Small delay so Gazebo is ready before spawning
         TimerAction(period=2.0, actions=[spawn_robot]),
-        load_jsb_after_spawn,
+        # Give Gazebo time to load the model and start controller_manager
+        TimerAction(period=6.0, actions=[load_joint_state_broadcaster]),
         load_arm_after_jsb,
         load_gripper_after_arm,
     ])

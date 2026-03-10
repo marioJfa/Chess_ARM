@@ -23,7 +23,7 @@
 
     <joint name="base_yaw">
       <command_interface name="position">
-        <param name="min">-3.1416</param>
+        <param name="min">pitch-3.1416</param>
         <param name="max"> 3.1416</param>
       </command_interface>
       <state_interface name="position"/>
@@ -59,8 +59,8 @@
 
     <joint name="finger_1_joint">
       <command_interface name="position">
-        <param name="min">-1.2217</param>
-        <param name="max">0.0</param>
+        <param name="min">0.0</param>
+        <param name="max">1.2217</param>
       </command_interface>
       <state_interface name="position"/>
       <state_interface name="velocity"/>
@@ -68,8 +68,8 @@
 
     <joint name="finger_2_joint">
       <command_interface name="position">
-        <param name="min">-1.2217</param>
-        <param name="max">0.0</param>
+        <param name="min">0.0</param>
+        <param name="max">1.2217</param>
       </command_interface>
       <state_interface name="position"/>
       <state_interface name="velocity"/>
@@ -77,8 +77,8 @@
 
     <joint name="finger_3_joint">
       <command_interface name="position">
-        <param name="min">-1.2217</param>
-        <param name="max">0.0</param>
+        <param name="min">0.0</param>
+        <param name="max">1.2217</param>
       </command_interface>
       <state_interface name="position"/>
       <state_interface name="velocity"/>
@@ -104,7 +104,7 @@
     <inertial>
       <mass value="0.5"/>
       <origin xyz="0 0 0.03"/>
-      <inertia ixx="0.000788" iyy="0.000788" izz="0.000900"
+      <inertia ixx="0.000600" iyy="0.000600" izz="0.000900"
                ixy="0" ixz="0" iyz="0"/>
     </inertial>
   </link>
@@ -122,7 +122,7 @@
     <inertial>
       <mass value="0.08"/>
       <origin xyz="0 0 0.02"/>
-      <inertia ixx="0.000010" iyy="0.000010" izz="0.000025"
+      <inertia ixx="0.000023" iyy="0.000023" izz="0.000025"
                ixy="0" ixz="0" iyz="0"/>
     </inertial>
   </link>
@@ -140,7 +140,7 @@
     <inertial>
       <mass value="0.3"/>
       <origin xyz="0 0 0.10"/>
-      <inertia ixx="0.001017" iyy="0.001017" izz="0.000016"
+      <inertia ixx="0.001040" iyy="0.001040" izz="0.000080"
                ixy="0" ixz="0" iyz="0"/>
     </inertial>
   </link>
@@ -158,7 +158,7 @@
     <inertial>
       <mass value="0.25"/>
       <origin xyz="0 0 0.09"/>
-      <inertia ixx="0.000682" iyy="0.000682" izz="0.000013"
+      <inertia ixx="0.000701" iyy="0.000701" izz="0.000051"
                ixy="0" ixz="0" iyz="0"/>
     </inertial>
   </link>
@@ -176,7 +176,7 @@
     <inertial>
       <mass value="0.1"/>
       <origin xyz="0 0 0.025"/>
-      <inertia ixx="0.000027" iyy="0.000027" izz="0.000045"
+      <inertia ixx="0.000043" iyy="0.000043" izz="0.000045"
                ixy="0" ixz="0" iyz="0"/>
     </inertial>
   </link>
@@ -260,7 +260,7 @@
     <parent link="shoulder_roll_link"/>
     <child  link="upper_arm"/>
     <origin xyz="0 0 0.04" rpy="0 0 0"/>
-    <axis xyz="1 0 0"/>
+    <axis xyz="0 1 0"/>
     <limit lower="-0.7854" upper="0.7854" effort="10.0" velocity="1.0"/>
     <dynamics damping="0.1" friction="0.05"/>
   </joint>
@@ -288,7 +288,7 @@
     <child  link="finger_1"/>
     <origin xyz="0.035 0.000 0.05" rpy="0 0 0"/>
     <axis xyz="0 1 0"/>
-    <limit lower="-1.2217" upper="0.0" effort="2.0" velocity="2.0"/>
+    <limit lower="0.0" upper="1.2217" effort="2.0" velocity="2.0"/>
     <dynamics damping="0.05" friction="0.02"/>
   </joint>
 
@@ -296,8 +296,8 @@
     <parent link="wrist_link"/>
     <child  link="finger_2"/>
     <origin xyz="-0.018 0.030 0.05" rpy="0 0 2.0944"/>
-    <axis xyz="0.866 0.5 0"/>
-    <limit lower="-1.2217" upper="0.0" effort="2.0" velocity="2.0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="0.0" upper="1.2217" effort="2.0" velocity="2.0"/>
     <dynamics damping="0.05" friction="0.02"/>
   </joint>
 
@@ -305,8 +305,8 @@
     <parent link="wrist_link"/>
     <child  link="finger_3"/>
     <origin xyz="-0.018 -0.030 0.05" rpy="0 0 4.1888"/>
-    <axis xyz="0.866 -0.5 0"/>
-    <limit lower="-1.2217" upper="0.0" effort="2.0" velocity="2.0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="0.0" upper="1.2217" effort="2.0" velocity="2.0"/>
     <dynamics damping="0.05" friction="0.02"/>
   </joint>
 
@@ -348,11 +348,14 @@
     <mu1>1.2</mu1><mu2>1.2</mu2>
   </gazebo>
 
-  <!-- gz_ros2_control plugin -->
+  <!-- gz_ros2_control plugin — path injected by launch file at runtime -->
   <gazebo>
-    <plugin filename="gz_ros2_control-system"
+    <plugin filename="libgz_ros2_control-system.so"
             name="gz_ros2_control::GazeboSimROS2ControlPlugin">
-      <parameters>$(find robot_arm_description)/config/controllers.yaml</parameters>
+      <parameters>CONTROLLERS_YAML_PATH</parameters>
+      <ros>
+        <namespace>/</namespace>
+      </ros>
     </plugin>
   </gazebo>
 

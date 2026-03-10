@@ -2,20 +2,18 @@ controller_manager:
   ros__parameters:
     update_rate: 100  # Hz
 
-    # Publishes all joint states to /joint_states
     joint_state_broadcaster:
       type: joint_state_broadcaster/JointStateBroadcaster
 
-    # Position controller for the 4 arm joints
     arm_controller:
       type: joint_trajectory_controller/JointTrajectoryController
 
-    # Position controller for the 3 gripper fingers
     gripper_controller:
       type: joint_trajectory_controller/JointTrajectoryController
 
 arm_controller:
   ros__parameters:
+    use_sim_time: false
     joints:
       - base_yaw
       - shoulder_roll
@@ -29,12 +27,15 @@ arm_controller:
     state_publish_rate: 50.0
     action_monitor_rate: 20.0
     allow_partial_joints_goal: false
+    open_loop_control: true
+    allow_integration_in_goal_trajectories: true
     constraints:
-      stopped_velocity_tolerance: 0.01
+      stopped_velocity_tolerance: 0.0
       goal_time: 0.0
 
 gripper_controller:
   ros__parameters:
+    use_sim_time: false
     joints:
       - finger_1_joint
       - finger_2_joint
@@ -47,6 +48,8 @@ gripper_controller:
     state_publish_rate: 50.0
     action_monitor_rate: 20.0
     allow_partial_joints_goal: true
+    open_loop_control: true
+    allow_integration_in_goal_trajectories: true
     constraints:
-      stopped_velocity_tolerance: 0.01
+      stopped_velocity_tolerance: 0.0
       goal_time: 0.0
