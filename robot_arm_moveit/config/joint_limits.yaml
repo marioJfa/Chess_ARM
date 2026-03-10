@@ -1,0 +1,46 @@
+# joint_limits.yaml
+# MoveIt uses these for trajectory time parameterization.
+# Values mirror the URDF — change URDF first, then update here.
+
+joint_limits:
+  base_yaw:
+    has_velocity_limits: true
+    max_velocity: 1.0
+    has_acceleration_limits: true
+    max_acceleration: 2.0
+
+  shoulder_roll:
+    has_velocity_limits: true
+    max_velocity: 1.0
+    has_acceleration_limits: true
+    max_acceleration: 2.0
+
+  shoulder_pitch:
+    has_velocity_limits: true
+    max_velocity: 1.0
+    has_acceleration_limits: true
+    max_acceleration: 2.0
+
+  elbow_pitch:
+    has_velocity_limits: true
+    max_velocity: 1.5
+    has_acceleration_limits: true
+    max_acceleration: 3.0
+
+  finger_1_joint:
+    has_velocity_limits: true
+    max_velocity: 2.0
+    has_acceleration_limits: true
+    max_acceleration: 4.0
+
+  finger_2_joint:
+    has_velocity_limits: true
+    max_velocity: 2.0
+    has_acceleration_limits: true
+    max_acceleration: 4.0
+
+  finger_3_joint:
+    has_velocity_limits: true
+    max_velocity: 2.0
+    has_acceleration_limits: true
+    max_acceleration: 4.0

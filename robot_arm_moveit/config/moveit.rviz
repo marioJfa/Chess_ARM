@@ -1,0 +1,44 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Enabled: true
+      Name: Grid
+    - Class: rviz_default_plugins/RobotModel
+      Enabled: true
+      Name: RobotModel
+      Description Topic:
+        Value: /robot_description
+    - Class: moveit_rviz_plugin/PlanningScene
+      Enabled: true
+      Name: PlanningScene
+      Planning Scene Topic:
+        Value: /monitored_planning_scene
+      Robot Visual Enabled: true
+      Robot Collision Enabled: false
+    - Class: moveit_rviz_plugin/MotionPlanning
+      Enabled: true
+      Name: MotionPlanning
+      Move Group Namespace: ""
+      Planning Group: arm
+      Show Robot Visual: true
+      Show Robot Collision: false
+      Show Trail: false
+  Enabled: true
+  Fixed Frame: world
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 1.5
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0.3
+      Pitch: 0.5
+      Yaw: 0.8
+      Name: Current View

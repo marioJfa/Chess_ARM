@@ -63,10 +63,21 @@ ros2 topic pub /arm_controller/joint_trajectory \
 
 
 
-##v
+##v0.3.9
 
 --added a Gui controller for testing 
 
         ros2 run robot_arm_description arm_slider_gui.py
 
 -- fixed the arm movement 
+
+
+##v0.4.0
+
+-- adding IK to calculate movement 
+        --moveit
+
+                ros2 launch robot_arm_moveit moveit.launch.py
+
+        --python script
+
