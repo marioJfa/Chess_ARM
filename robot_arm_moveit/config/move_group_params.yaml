@@ -20,7 +20,7 @@ move_group:
         - arm_controller
         - gripper_controller
       arm_controller:
-        action_ns: ""
+        action_ns: follow_joint_trajectory
         type: FollowJointTrajectory
         default: true
         joints:
@@ -29,7 +29,7 @@ move_group:
           - shoulder_pitch
           - elbow_pitch
       gripper_controller:
-        action_ns: ""
+        action_ns: follow_joint_trajectory
         type: FollowJointTrajectory
         default: true
         joints:
@@ -37,9 +37,10 @@ move_group:
           - finger_2_joint
           - finger_3_joint
     trajectory_execution:
-      allowed_execution_duration_scaling: 1.2
-      allowed_goal_duration_margin: 0.5
-      allowed_start_tolerance: 0.05
+      allowed_execution_duration_scaling: 2.0
+      allowed_goal_duration_margin: 5.0
+      allowed_start_tolerance: 0.5
+      execution_duration_monitoring: false
     use_sim_time: true
     allow_trajectory_execution: true
     publish_planning_scene_robot: true
