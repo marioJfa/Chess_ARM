@@ -84,3 +84,4 @@ ros2 topic pub /arm_controller/joint_trajectory \
 ##v0.4.2 
 
         --adding the camera 
+                ros2 run rqt_image_view rqt_image_view
