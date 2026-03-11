@@ -1,0 +1,11 @@
+# chess_params.yaml
+engine:
+  stockfish_path: /usr/games/stockfish   # default apt install path
+  depth: 10                               # search depth (1-20, higher = stronger)
+  move_time_ms: 2000                      # max ms per move
+  skill_level: 10                         # 0-20, 20 = max strength
+
+game:
+  arm_plays_as: black    # arm plays black, human plays white
+  human_goes_first: true
+  board_flip: false      # flip board display for black perspective

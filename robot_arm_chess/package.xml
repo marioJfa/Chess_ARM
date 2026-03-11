@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>robot_arm_chess</name>
+  <version>0.1.0</version>
+  <description>Chess engine integration for robot_arm — Stockfish + pick/place arm control</description>
+  <maintainer email="mario@example.com">mario</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>trajectory_msgs</depend>
+  <depend>builtin_interfaces</depend>
+  <depend>robot_arm_description</depend>
+
+  <exec_depend>ros_gz_sim</exec_depend>
+  <exec_depend>ros_gz_bridge</exec_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

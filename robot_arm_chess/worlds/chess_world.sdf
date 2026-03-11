@@ -1,0 +1,212 @@
+<?xml version="1.0" ?>
+<sdf version="1.8">
+  <world name="arm_world">
+
+    <!-- Physics -->
+    <physics name="1ms" type="ignored">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+
+    <!-- Plugins -->
+    <plugin filename="gz-sim-physics-system"
+            name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-user-commands-system"
+            name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system"
+            name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-contact-system"
+            name="gz::sim::systems::Contact"/>
+    <plugin filename="gz-sim-sensors-system"
+            name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+
+    <!-- Sunlight -->
+    <light name="sun" type="directional">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <!-- Ground plane -->
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane><normal>0 0 1</normal><size>20 20</size></plane>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane><normal>0 0 1</normal><size>20 20</size></plane>
+          </geometry>
+          <material>
+            <ambient>0.3 0.3 0.3 1</ambient>
+            <diffuse>0.5 0.5 0.5 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!--
+      Chess board:
+        origin (a1 center) = (0.20, -0.175, 0.02)
+        square_size = 0.045m
+        board spans x: 0.20 to 0.515  y: -0.175 to 0.14
+        board center = (0.3575, -0.0175, 0.01)
+    -->
+
+    <!-- Board surface -->
+    <model name="chess_board">
+      <static>true</static>
+      <pose>0.3575 -0.0175 0.01 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.375 0.375 0.02</size></box></geometry>
+        </collision>
+        <visual name="board_base">
+          <geometry><box><size>0.375 0.375 0.02</size></box></geometry>
+          <material>
+            <ambient>0.4 0.25 0.1 1</ambient>
+            <diffuse>0.4 0.25 0.1 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Chess squares (8x8 alternating colors) -->
+    <!-- Generated: a=file 0-7, r=rank 0-7 -->
+    <!-- x = 0.20 + rank*0.045,  y = -0.175 + file*0.045,  z = 0.021 -->
+
+    <!-- Rank 1 (z=rank index 0) -->
+    <model name="sq_a1"><static>true</static><pose>0.2225 -0.1525 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.95 0.95 0.85 1</diffuse></material></visual></link></model>
+    <model name="sq_b1"><static>true</static><pose>0.2225 -0.1075 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+    <model name="sq_c1"><static>true</static><pose>0.2225 -0.0625 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.95 0.95 0.85 1</diffuse></material></visual></link></model>
+    <model name="sq_d1"><static>true</static><pose>0.2225 -0.0175 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+    <model name="sq_e1"><static>true</static><pose>0.2225 0.0275 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.95 0.95 0.85 1</diffuse></material></visual></link></model>
+    <model name="sq_f1"><static>true</static><pose>0.2225 0.0725 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+    <model name="sq_g1"><static>true</static><pose>0.2225 0.1175 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.95 0.95 0.85 1</diffuse></material></visual></link></model>
+    <model name="sq_h1"><static>true</static><pose>0.2225 0.1625 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+
+    <!-- Rank 2 -->
+    <model name="sq_a2"><static>true</static><pose>0.2675 -0.1525 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+    <model name="sq_b2"><static>true</static><pose>0.2675 -0.1075 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.95 0.95 0.85 1</diffuse></material></visual></link></model>
+    <model name="sq_c2"><static>true</static><pose>0.2675 -0.0625 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+    <model name="sq_d2"><static>true</static><pose>0.2675 -0.0175 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.95 0.95 0.85 1</diffuse></material></visual></link></model>
+    <model name="sq_e2"><static>true</static><pose>0.2675 0.0275 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+    <model name="sq_f2"><static>true</static><pose>0.2675 0.0725 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.95 0.95 0.85 1</diffuse></material></visual></link></model>
+    <model name="sq_g2"><static>true</static><pose>0.2675 0.1175 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+    <model name="sq_h2"><static>true</static><pose>0.2675 0.1625 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.95 0.95 0.85 1</diffuse></material></visual></link></model>
+
+    <!-- Rank 3 -->
+    <model name="sq_a3"><static>true</static><pose>0.3125 -0.1525 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.95 0.95 0.85 1</diffuse></material></visual></link></model>
+    <model name="sq_b3"><static>true</static><pose>0.3125 -0.1075 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+    <model name="sq_c3"><static>true</static><pose>0.3125 -0.0625 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.95 0.95 0.85 1</diffuse></material></visual></link></model>
+    <model name="sq_d3"><static>true</static><pose>0.3125 -0.0175 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+    <model name="sq_e3"><static>true</static><pose>0.3125 0.0275 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.95 0.95 0.85 1</diffuse></material></visual></link></model>
+    <model name="sq_f3"><static>true</static><pose>0.3125 0.0725 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+    <model name="sq_g3"><static>true</static><pose>0.3125 0.1175 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+    <model name="sq_h3"><static>true</static><pose>0.3125 0.1625 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.95 0.95 0.85 1</diffuse></material></visual></link></model>
+
+    <!-- Rank 4 -->
+    <model name="sq_a4"><static>true</static><pose>0.3575 -0.1525 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+    <model name="sq_b4"><static>true</static><pose>0.3575 -0.1075 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.95 0.95 0.85 1</diffuse></material></visual></link></model>
+    <model name="sq_c4"><static>true</static><pose>0.3575 -0.0625 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+    <model name="sq_d4"><static>true</static><pose>0.3575 -0.0175 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.95 0.95 0.85 1</diffuse></material></visual></link></model>
+    <model name="sq_e4"><static>true</static><pose>0.3575 0.0275 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+    <model name="sq_f4"><static>true</static><pose>0.3575 0.0725 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.95 0.95 0.85 1</diffuse></material></visual></link></model>
+    <model name="sq_g4"><static>true</static><pose>0.3575 0.1175 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+    <model name="sq_h4"><static>true</static><pose>0.3575 0.1625 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.95 0.95 0.85 1</diffuse></material></visual></link></model>
+
+    <!-- Rank 5 -->
+    <model name="sq_a5"><static>true</static><pose>0.4025 -0.1525 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.95 0.95 0.85 1</diffuse></material></visual></link></model>
+    <model name="sq_b5"><static>true</static><pose>0.4025 -0.1075 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+    <model name="sq_c5"><static>true</static><pose>0.4025 -0.0625 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.95 0.95 0.85 1</diffuse></material></visual></link></model>
+    <model name="sq_d5"><static>true</static><pose>0.4025 -0.0175 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+    <model name="sq_e5"><static>true</static><pose>0.4025 0.0275 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.95 0.95 0.85 1</diffuse></material></visual></link></model>
+    <model name="sq_f5"><static>true</static><pose>0.4025 0.0725 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+    <model name="sq_g5"><static>true</static><pose>0.4025 0.1175 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+    <model name="sq_h5"><static>true</static><pose>0.4025 0.1625 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.95 0.95 0.85 1</diffuse></material></visual></link></model>
+
+    <!-- Rank 6 -->
+    <model name="sq_a6"><static>true</static><pose>0.4475 -0.1525 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+    <model name="sq_b6"><static>true</static><pose>0.4475 -0.1075 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.95 0.95 0.85 1</diffuse></material></visual></link></model>
+    <model name="sq_c6"><static>true</static><pose>0.4475 -0.0625 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+    <model name="sq_d6"><static>true</static><pose>0.4475 -0.0175 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+    <model name="sq_e6"><static>true</static><pose>0.4475 0.0275 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+    <model name="sq_f6"><static>true</static><pose>0.4475 0.0725 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.95 0.95 0.85 1</diffuse></material></visual></link></model>
+    <model name="sq_g6"><static>true</static><pose>0.4475 0.1175 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+    <model name="sq_h6"><static>true</static><pose>0.4475 0.1625 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.95 0.95 0.85 1</diffuse></material></visual></link></model>
+
+    <!-- Rank 7 -->
+    <model name="sq_a7"><static>true</static><pose>0.4925 -0.1525 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.95 0.95 0.85 1</diffuse></material></visual></link></model>
+    <model name="sq_b7"><static>true</static><pose>0.4925 -0.1075 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+    <model name="sq_c7"><static>true</static><pose>0.4925 -0.0625 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.95 0.95 0.85 1</diffuse></material></visual></link></model>
+    <model name="sq_d7"><static>true</static><pose>0.4925 -0.0175 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+    <model name="sq_e7"><static>true</static><pose>0.4925 0.0275 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.95 0.95 0.85 1</diffuse></material></visual></link></model>
+    <model name="sq_f7"><static>true</static><pose>0.4925 0.0725 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+    <model name="sq_g7"><static>true</static><pose>0.4925 0.1175 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.95 0.95 0.85 1</diffuse></material></visual></link></model>
+    <model name="sq_h7"><static>true</static><pose>0.4925 0.1625 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+
+    <!-- Rank 8 -->
+    <model name="sq_a8"><static>true</static><pose>0.5375 -0.1525 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+    <model name="sq_b8"><static>true</static><pose>0.5375 -0.1075 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.95 0.95 0.85 1</diffuse></material></visual></link></model>
+    <model name="sq_c8"><static>true</static><pose>0.5375 -0.0625 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+    <model name="sq_d8"><static>true</static><pose>0.5375 -0.0175 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.95 0.95 0.85 1</diffuse></material></visual></link></model>
+    <model name="sq_e8"><static>true</static><pose>0.5375 0.0275 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+    <model name="sq_f8"><static>true</static><pose>0.5375 0.0725 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.95 0.95 0.85 1</diffuse></material></visual></link></model>
+    <model name="sq_g8"><static>true</static><pose>0.5375 0.1175 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.15 0.1 0.05 1</ambient><diffuse>0.15 0.1 0.05 1</diffuse></material></visual></link></model>
+    <model name="sq_h8"><static>true</static><pose>0.5375 0.1625 0.021 0 0 0</pose><link name="l"><visual name="v"><geometry><box><size>0.044 0.044 0.001</size></box></geometry><material><ambient>0.95 0.95 0.85 1</ambient><diffuse>0.95 0.95 0.85 1</diffuse></material></visual></link></model>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         CHESS PIECES  —  cylinders, height=0.035, radius=0.015
+         White pieces on ranks 1-2, Black on ranks 7-8
+         x = 0.20 + rank*0.045,  y = -0.175 + file*0.045,  z = 0.038
+    ════════════════════════════════════════════════════════════ -->
+
+    <!-- WHITE PIECES rank 1: R N B Q K B N R -->
+    <model name="wp_ra1"><pose>0.2225 -0.1525 0.038 0 0 0</pose><link name="l"><inertial><mass>0.02</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.015</radius><length>0.035</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.015</radius><length>0.035</length></cylinder></geometry><material><ambient>0.9 0.9 0.85 1</ambient><diffuse>0.9 0.9 0.85 1</diffuse></material></visual></link></model>
+    <model name="wp_nb1"><pose>0.2225 -0.1075 0.038 0 0 0</pose><link name="l"><inertial><mass>0.02</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.015</radius><length>0.035</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.015</radius><length>0.035</length></cylinder></geometry><material><ambient>0.9 0.9 0.85 1</ambient><diffuse>0.9 0.9 0.85 1</diffuse></material></visual></link></model>
+    <model name="wp_bc1"><pose>0.2225 -0.0625 0.038 0 0 0</pose><link name="l"><inertial><mass>0.02</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.015</radius><length>0.035</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.015</radius><length>0.035</length></cylinder></geometry><material><ambient>0.9 0.9 0.85 1</ambient><diffuse>0.9 0.9 0.85 1</diffuse></material></visual></link></model>
+    <model name="wp_qd1"><pose>0.2225 -0.0175 0.038 0 0 0</pose><link name="l"><inertial><mass>0.02</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.015</radius><length>0.040</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.015</radius><length>0.040</length></cylinder></geometry><material><ambient>0.9 0.9 0.85 1</ambient><diffuse>0.9 0.9 0.85 1</diffuse></material></visual></link></model>
+    <model name="wp_ke1"><pose>0.2225 0.0275 0.038 0 0 0</pose><link name="l"><inertial><mass>0.02</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.015</radius><length>0.045</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.015</radius><length>0.045</length></cylinder></geometry><material><ambient>0.9 0.9 0.85 1</ambient><diffuse>0.9 0.9 0.85 1</diffuse></material></visual></link></model>
+    <model name="wp_bf1"><pose>0.2225 0.0725 0.038 0 0 0</pose><link name="l"><inertial><mass>0.02</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.015</radius><length>0.035</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.015</radius><length>0.035</length></cylinder></geometry><material><ambient>0.9 0.9 0.85 1</ambient><diffuse>0.9 0.9 0.85 1</diffuse></material></visual></link></model>
+    <model name="wp_ng1"><pose>0.2225 0.1175 0.038 0 0 0</pose><link name="l"><inertial><mass>0.02</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.015</radius><length>0.035</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.015</radius><length>0.035</length></cylinder></geometry><material><ambient>0.9 0.9 0.85 1</ambient><diffuse>0.9 0.9 0.85 1</diffuse></material></visual></link></model>
+    <model name="wp_rh1"><pose>0.2225 0.1625 0.038 0 0 0</pose><link name="l"><inertial><mass>0.02</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.015</radius><length>0.035</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.015</radius><length>0.035</length></cylinder></geometry><material><ambient>0.9 0.9 0.85 1</ambient><diffuse>0.9 0.9 0.85 1</diffuse></material></visual></link></model>
+
+    <!-- WHITE PAWNS rank 2 -->
+    <model name="wp_pa2"><pose>0.2675 -0.1525 0.035 0 0 0</pose><link name="l"><inertial><mass>0.015</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry><material><ambient>0.9 0.9 0.85 1</ambient><diffuse>0.9 0.9 0.85 1</diffuse></material></visual></link></model>
+    <model name="wp_pb2"><pose>0.2675 -0.1075 0.035 0 0 0</pose><link name="l"><inertial><mass>0.015</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry><material><ambient>0.9 0.9 0.85 1</ambient><diffuse>0.9 0.9 0.85 1</diffuse></material></visual></link></model>
+    <model name="wp_pc2"><pose>0.2675 -0.0625 0.035 0 0 0</pose><link name="l"><inertial><mass>0.015</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry><material><ambient>0.9 0.9 0.85 1</ambient><diffuse>0.9 0.9 0.85 1</diffuse></material></visual></link></model>
+    <model name="wp_pd2"><pose>0.2675 -0.0175 0.035 0 0 0</pose><link name="l"><inertial><mass>0.015</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry><material><ambient>0.9 0.9 0.85 1</ambient><diffuse>0.9 0.9 0.85 1</diffuse></material></visual></link></model>
+    <model name="wp_pe2"><pose>0.2675 0.0275 0.035 0 0 0</pose><link name="l"><inertial><mass>0.015</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry><material><ambient>0.9 0.9 0.85 1</ambient><diffuse>0.9 0.9 0.85 1</diffuse></material></visual></link></model>
+    <model name="wp_pf2"><pose>0.2675 0.0725 0.035 0 0 0</pose><link name="l"><inertial><mass>0.015</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry><material><ambient>0.9 0.9 0.85 1</ambient><diffuse>0.9 0.9 0.85 1</diffuse></material></visual></link></model>
+    <model name="wp_pg2"><pose>0.2675 0.1175 0.035 0 0 0</pose><link name="l"><inertial><mass>0.015</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry><material><ambient>0.9 0.9 0.85 1</ambient><diffuse>0.9 0.9 0.85 1</diffuse></material></visual></link></model>
+    <model name="wp_ph2"><pose>0.2675 0.1625 0.035 0 0 0</pose><link name="l"><inertial><mass>0.015</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry><material><ambient>0.9 0.9 0.85 1</ambient><diffuse>0.9 0.9 0.85 1</diffuse></material></visual></link></model>
+
+    <!-- BLACK PIECES rank 8: R N B Q K B N R -->
+    <model name="bp_ra8"><pose>0.5375 -0.1525 0.038 0 0 0</pose><link name="l"><inertial><mass>0.02</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.015</radius><length>0.035</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.015</radius><length>0.035</length></cylinder></geometry><material><ambient>0.15 0.12 0.1 1</ambient><diffuse>0.15 0.12 0.1 1</diffuse></material></visual></link></model>
+    <model name="bp_nb8"><pose>0.5375 -0.1075 0.038 0 0 0</pose><link name="l"><inertial><mass>0.02</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.015</radius><length>0.035</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.015</radius><length>0.035</length></cylinder></geometry><material><ambient>0.15 0.12 0.1 1</ambient><diffuse>0.15 0.12 0.1 1</diffuse></material></visual></link></model>
+    <model name="bp_bc8"><pose>0.5375 -0.0625 0.038 0 0 0</pose><link name="l"><inertial><mass>0.02</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.015</radius><length>0.035</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.015</radius><length>0.035</length></cylinder></geometry><material><ambient>0.15 0.12 0.1 1</ambient><diffuse>0.15 0.12 0.1 1</diffuse></material></visual></link></model>
+    <model name="bp_qd8"><pose>0.5375 -0.0175 0.038 0 0 0</pose><link name="l"><inertial><mass>0.02</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.015</radius><length>0.040</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.015</radius><length>0.040</length></cylinder></geometry><material><ambient>0.15 0.12 0.1 1</ambient><diffuse>0.15 0.12 0.1 1</diffuse></material></visual></link></model>
+    <model name="bp_ke8"><pose>0.5375 0.0275 0.038 0 0 0</pose><link name="l"><inertial><mass>0.02</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.015</radius><length>0.045</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.015</radius><length>0.045</length></cylinder></geometry><material><ambient>0.15 0.12 0.1 1</ambient><diffuse>0.15 0.12 0.1 1</diffuse></material></visual></link></model>
+    <model name="bp_bf8"><pose>0.5375 0.0725 0.038 0 0 0</pose><link name="l"><inertial><mass>0.02</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.015</radius><length>0.035</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.015</radius><length>0.035</length></cylinder></geometry><material><ambient>0.15 0.12 0.1 1</ambient><diffuse>0.15 0.12 0.1 1</diffuse></material></visual></link></model>
+    <model name="bp_ng8"><pose>0.5375 0.1175 0.038 0 0 0</pose><link name="l"><inertial><mass>0.02</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.015</radius><length>0.035</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.015</radius><length>0.035</length></cylinder></geometry><material><ambient>0.15 0.12 0.1 1</ambient><diffuse>0.15 0.12 0.1 1</diffuse></material></visual></link></model>
+    <model name="bp_rh8"><pose>0.5375 0.1625 0.038 0 0 0</pose><link name="l"><inertial><mass>0.02</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.015</radius><length>0.035</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.015</radius><length>0.035</length></cylinder></geometry><material><ambient>0.15 0.12 0.1 1</ambient><diffuse>0.15 0.12 0.1 1</diffuse></material></visual></link></model>
+
+    <!-- BLACK PAWNS rank 7 -->
+    <model name="bp_pa7"><pose>0.4925 -0.1525 0.035 0 0 0</pose><link name="l"><inertial><mass>0.015</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry><material><ambient>0.15 0.12 0.1 1</ambient><diffuse>0.15 0.12 0.1 1</diffuse></material></visual></link></model>
+    <model name="bp_pb7"><pose>0.4925 -0.1075 0.035 0 0 0</pose><link name="l"><inertial><mass>0.015</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry><material><ambient>0.15 0.12 0.1 1</ambient><diffuse>0.15 0.12 0.1 1</diffuse></material></visual></link></model>
+    <model name="bp_pc7"><pose>0.4925 -0.0625 0.035 0 0 0</pose><link name="l"><inertial><mass>0.015</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry><material><ambient>0.15 0.12 0.1 1</ambient><diffuse>0.15 0.12 0.1 1</diffuse></material></visual></link></model>
+    <model name="bp_pd7"><pose>0.4925 -0.0175 0.035 0 0 0</pose><link name="l"><inertial><mass>0.015</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry><material><ambient>0.15 0.12 0.1 1</ambient><diffuse>0.15 0.12 0.1 1</diffuse></material></visual></link></model>
+    <model name="bp_pe7"><pose>0.4925 0.0275 0.035 0 0 0</pose><link name="l"><inertial><mass>0.015</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry><material><ambient>0.15 0.12 0.1 1</ambient><diffuse>0.15 0.12 0.1 1</diffuse></material></visual></link></model>
+    <model name="bp_pf7"><pose>0.4925 0.0725 0.035 0 0 0</pose><link name="l"><inertial><mass>0.015</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry><material><ambient>0.15 0.12 0.1 1</ambient><diffuse>0.15 0.12 0.1 1</diffuse></material></visual></link></model>
+    <model name="bp_pg7"><pose>0.4925 0.1175 0.035 0 0 0</pose><link name="l"><inertial><mass>0.015</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry><material><ambient>0.15 0.12 0.1 1</ambient><diffuse>0.15 0.12 0.1 1</diffuse></material></visual></link></model>
+    <model name="bp_ph7"><pose>0.4925 0.1625 0.035 0 0 0</pose><link name="l"><inertial><mass>0.015</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry><material><ambient>0.15 0.12 0.1 1</ambient><diffuse>0.15 0.12 0.1 1</diffuse></material></visual></link></model>
+
+  </world>
+</sdf>
