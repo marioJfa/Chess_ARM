@@ -14,6 +14,12 @@ move_group:
         - default_planning_response_adapters/AddTimeOptimalParameterization
         - default_planning_response_adapters/ValidateSolution
         - default_planning_response_adapters/DisplayMotionPath
+      arm:
+        default_planner_config: RRTConnect
+        planner_configs:
+          - RRTConnect
+        num_planning_attempts: 5
+        planning_time: 5.0
     moveit_controller_manager: moveit_simple_controller_manager/MoveItSimpleControllerManager
     moveit_simple_controller_manager:
       controller_names:

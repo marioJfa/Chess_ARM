@@ -28,6 +28,13 @@
     <joint name="elbow_pitch"    value="-0.524"/>
   </group_state>
 
+  <group_state name="standby" group="arm">
+    <joint name="base_yaw"       value="0"/>
+    <joint name="shoulder_roll"  value="0"/>
+    <joint name="shoulder_pitch" value="1.2"/>
+    <joint name="elbow_pitch"    value="0"/>
+  </group_state>
+
   <group_state name="pick" group="arm">
     <joint name="base_yaw"       value="0.524"/>
     <joint name="shoulder_roll"  value="0.175"/>

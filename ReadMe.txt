@@ -17,6 +17,16 @@ good:
 
 commands Used :
 
+
+#chess_with_arm
+-  ros2 launch robot_arm_chess chess.launch.py  
+#camera                              
+-  ros2 run rqt_image_view rqt_image_view                                        
+
+
+
+
+
 ##ADDING the path to the fles for ros and our compilation
 
 echo "source ~/Desktop/Arm/install/setup.bash" >> ~/.bashrc
@@ -85,3 +95,9 @@ ros2 topic pub /arm_controller/joint_trajectory \
 
         --adding the camera 
                 ros2 run rqt_image_view rqt_image_view
+
+##v0.4.3
+
+        --added chess board
+        --chess game Gui
+        -- arm animation and standby position

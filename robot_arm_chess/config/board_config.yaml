@@ -1,38 +1,12 @@
-# board_config.yaml
-# Chess board geometry in the robot's world frame.
-# Board is placed in front of the arm within reach.
-#
-# Board layout (from arm's perspective):
-#   a1 = front-left corner (white's queen-rook)
-#   h8 = back-right corner
-#
-#   Rank 1 (white pieces) = closest to arm
-#   Rank 8 (black pieces) = furthest from arm
-
-board:
-  # World position of the a1 square center
-  origin_x: 0.20
-  origin_y: -0.175
-  origin_z: 0.02       # top of table surface
-
-  # Size of each square in metres
-  square_size: 0.045
-
-  # Board rotation around Z (0 = a1 at front-left)
-  rotation_deg: 0.0
-
-pieces:
-  # Height of piece base above board surface
-  grasp_height: 0.04    # Z where gripper closes around piece
-  lift_height:  0.20    # Z to lift piece before moving
-  hover_height: 0.12    # Z to hover above target before placing
-
-  # Gripper positions (radians)
-  gripper_open:   0.0
-  gripper_closed: 1.05  # ~60 degrees
-
-arm:
-  # Speed scaling for chess moves (0.0-1.0)
-  velocity_scale: 0.5
-  acceleration_scale: 0.3
-  move_duration: 3.0    # seconds per trajectory
+/**:
+  ros__parameters:
+    origin_x: 0.20
+    origin_y: -0.175
+    origin_z: 0.02
+    square_size: 0.045
+    grasp_height: 0.04
+    lift_height: 0.20
+    hover_height: 0.12
+    gripper_open: 0.0
+    gripper_closed: 1.05
+    move_duration: 3.0

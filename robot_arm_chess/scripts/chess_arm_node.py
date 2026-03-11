@@ -2,14 +2,13 @@
 """
 chess_arm_node.py
 Converts chess moves (UCI format) into pick-and-place arm trajectories.
-Uses the analytical IK from arm_ik.py to send goals to arm_controller.
-
-Flow:
-  engine_move (UCI) → compute from/to XYZ → pick piece → place piece
+Uses analytical IK to send goals to arm_controller.
+Teleports Gazebo piece models via gz service to match arm motion.
 
 Subscribes:
   /chess/engine_move   (std_msgs/String) — arm's move in UCI (e.g. e7e5)
   /chess/board_state   (std_msgs/String) — FEN for capture detection
+  /chess/human_move    (std_msgs/String) — human move, teleport pieces in sim
 
 Publishes:
   /chess/arm_move      (std_msgs/String) — confirms move executed
@@ -25,6 +24,7 @@ import math
 import chess
 import threading
 import time
+import subprocess
 
 
 # ── Arm geometry (must match URDF) ────────────────────────────────────────────
@@ -42,6 +42,10 @@ JOINT_LIMITS = {
     'shoulder_pitch': (-1.5708,    2.3562),
     'elbow_pitch':    (-2.0944,    2.0944),
 }
+
+# Piece z-center above ground when sitting on the board (board top = 0.02)
+PIECE_Z  = 0.038   # back-rank pieces (cylinder length 0.035)
+PAWN_Z   = 0.034   # pawns (cylinder length 0.028)
 
 
 class ChessArmNode(Node):
@@ -75,6 +79,11 @@ class ChessArmNode(Node):
         self.board = chess.Board()
         self.busy  = False
 
+        # Piece tracking: square_name -> gz model name  e.g. 'e2' -> 'wp_pe2'
+        self._piece_map  = {}
+        self._grave_idx  = 0
+        self._init_piece_map()
+
         # Publishers
         self.arm_pub     = self.create_publisher(
             JointTrajectory, '/arm_controller/joint_trajectory', 10)
@@ -88,15 +97,69 @@ class ChessArmNode(Node):
             String, '/chess/engine_move', self.engine_move_cb, 10)
         self.board_sub = self.create_subscription(
             String, '/chess/board_state', self.board_state_cb, 10)
+        self.human_sub = self.create_subscription(
+            String, '/chess/human_move', self.human_move_cb, 10)
 
         self.publish_status('IDLE')
         self.get_logger().info('Chess arm node ready')
 
+        # Go to standby pose after controllers come up
+        self._standby_timer = self.create_timer(3.0, self._go_standby_once)
+
+    # ── Piece map ──────────────────────────────────────────────────────────────
+    def _init_piece_map(self):
+        """Build initial chess square → Gazebo model name mapping."""
+        back = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r']
+        files = 'abcdefgh'
+        for i, p in enumerate(back):
+            self._piece_map[f'{files[i]}1'] = f'wp_{p}{files[i]}1'
+            self._piece_map[f'{files[i]}8'] = f'bp_{p}{files[i]}8'
+        for i in range(8):
+            self._piece_map[f'{files[i]}2'] = f'wp_p{files[i]}2'
+            self._piece_map[f'{files[i]}7'] = f'bp_p{files[i]}7'
+
+    def _teleport(self, model_name, x, y, z):
+        """Move a Gazebo model to (x, y, z) via gz service."""
+        req = (f'name: "{model_name}", '
+               f'pose: {{position: {{x: {x:.4f}, y: {y:.4f}, z: {z:.4f}}}, '
+               f'orientation: {{x: 0, y: 0, z: 0, w: 1}}}}')
+        subprocess.Popen(
+            ['gz', 'service', '-s', '/world/arm_world/set_pose',
+             '--reqtype', 'gz.msgs.Pose',
+             '--reptype', 'gz.msgs.Boolean',
+             '--timeout', '500', '--req', req],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def _teleport_to_graveyard(self, model_name):
+        """Move a captured piece off the board."""
+        idx = self._grave_idx
+        self._grave_idx += 1
+        col = idx % 8
+        row = idx // 8
+        # Dump pieces to the right of the board
+        x = self.ox + col * self.sq
+        y = self.oy + 8 * self.sq + 0.06 + row * 0.045
+        self._teleport(model_name, x, y, PIECE_Z)
+
+    def _piece_z(self, model_name):
+        """Return correct z for a piece model sitting on the board."""
+        return PAWN_Z if '_p' in model_name[3:] else PIECE_Z
+
+    def _apply_move_to_map(self, move: chess.Move):
+        """Update piece_map for any move (human or engine)."""
+        from_name = chess.square_name(move.from_square)
+        to_name   = chess.square_name(move.to_square)
+        # Remove captured piece from map (teleport handled separately)
+        self._piece_map.pop(to_name, None)
+        # Move piece
+        model = self._piece_map.pop(from_name, None)
+        if model:
+            self._piece_map[to_name] = model
+
     # ── Board geometry ─────────────────────────────────────────────────────────
     def square_to_xyz(self, square: chess.Square, z_offset: float = 0.0):
-        """Convert chess square index to world XYZ coordinates."""
-        file = chess.square_file(square)  # 0=a ... 7=h
-        rank = chess.square_rank(square)  # 0=1 ... 7=8
+        file = chess.square_file(square)
+        rank = chess.square_rank(square)
         x = self.ox + rank * self.sq
         y = self.oy + file * self.sq
         z = self.oz + z_offset
@@ -168,87 +231,83 @@ class ChessArmNode(Node):
 
     # ── Pick and place ────────────────────────────────────────────────────────
     def pick_piece(self, square: chess.Square):
-        """Pick up piece from square."""
         self.get_logger().info(f'Picking from {chess.square_name(square)}')
-
-        # Open gripper
         self.send_gripper(self.g_open)
-
-        # Hover above square
         x, y, z = self.square_to_xyz(square, self.z_hover)
         self.move_to_xyz(x, y, z)
-
-        # Lower to grasp height
         x, y, z = self.square_to_xyz(square, self.z_grasp)
         self.move_to_xyz(x, y, z, duration=1.5)
-
-        # Close gripper
         self.send_gripper(self.g_close)
-
-        # Lift piece
         x, y, z = self.square_to_xyz(square, self.z_lift)
         self.move_to_xyz(x, y, z, duration=1.5)
 
-    def place_piece(self, square: chess.Square):
-        """Place piece on square."""
+    def place_piece(self, square: chess.Square, model_name: str = None):
         self.get_logger().info(f'Placing on {chess.square_name(square)}')
-
-        # Hover above target square
         x, y, z = self.square_to_xyz(square, self.z_hover)
         self.move_to_xyz(x, y, z)
-
-        # Lower to place height
         x, y, z = self.square_to_xyz(square, self.z_grasp)
         self.move_to_xyz(x, y, z, duration=1.5)
-
-        # Release
+        # Teleport piece to destination as the arm lowers to place it
+        if model_name:
+            px, py, _ = self.square_to_xyz(square)
+            self._teleport(model_name, px, py, self._piece_z(model_name))
         self.send_gripper(self.g_open)
-
-        # Lift away
         x, y, z = self.square_to_xyz(square, self.z_lift)
         self.move_to_xyz(x, y, z, duration=1.5)
 
-    def remove_captured_piece(self, square: chess.Square):
-        """Move captured piece off the board."""
+    def remove_captured_piece(self, square: chess.Square, model_name: str = None):
         self.get_logger().info(f'Removing captured piece from {chess.square_name(square)}')
+        if model_name:
+            self._teleport_to_graveyard(model_name)
         self.pick_piece(square)
-        # Move to off-board dump zone
         self.move_to_xyz(self.ox - 0.10, self.oy - 0.05, self.z_hover)
         self.send_gripper(self.g_open)
         self.move_to_xyz(self.ox - 0.10, self.oy - 0.05, self.z_lift)
 
     def return_home(self):
-        """Return arm to home position."""
-        home = {'base_yaw': 0.0, 'shoulder_roll': 0.0,
-                'shoulder_pitch': 0.0, 'elbow_pitch': 0.0}
-        self.send_arm(home, duration=2.0)
+        self.send_arm(self._standby_pose(), duration=2.0)
+
+    def _standby_pose(self):
+        return {'base_yaw': 0.0, 'shoulder_roll': 0.0,
+                'shoulder_pitch': 1.2, 'elbow_pitch': -0.70}
+
+    def _go_standby_once(self):
+        self._standby_timer.cancel()
+        self.send_arm(self._standby_pose(), duration=2.5)
 
     # ── Main move execution ───────────────────────────────────────────────────
     def execute_move(self, uci: str):
         self.publish_status('MOVING')
         try:
-            move = chess.Move.from_uci(uci)
-            from_sq = move.from_square
-            to_sq   = move.to_square
+            move     = chess.Move.from_uci(uci)
+            from_sq  = move.from_square
+            to_sq    = move.to_square
+            from_name = chess.square_name(from_sq)
+            to_name   = chess.square_name(to_sq)
 
-            # Handle capture — remove opponent piece first
+            # Handle capture — teleport captured piece to graveyard + arm animation
             if self.board.is_capture(move):
-                self.get_logger().info('Capture detected — removing piece first')
-                self.remove_captured_piece(to_sq)
+                self.get_logger().info('Capture — removing piece first')
+                cap_model = self._piece_map.get(to_name)
+                self.remove_captured_piece(to_sq, cap_model)
 
-            # Pick and place
+            # Get the model being moved
+            moving_model = self._piece_map.get(from_name)
+
+            # Pick and place (piece teleports to destination inside place_piece)
             self.pick_piece(from_sq)
-            self.place_piece(to_sq)
+            self.place_piece(to_sq, moving_model)
 
-            # Return home
+            # Update internal map
+            self._apply_move_to_map(move)
+
             self.return_home()
 
-            # Confirm move
             msg = String()
             msg.data = uci
             self.confirm_pub.publish(msg)
             self.publish_status('DONE')
-            self.get_logger().info(f'Move {uci} executed successfully')
+            self.get_logger().info(f'Move {uci} executed')
 
         except Exception as e:
             self.get_logger().error(f'Move execution failed: {e}')
@@ -273,6 +332,30 @@ class ChessArmNode(Node):
         thread = threading.Thread(
             target=self.execute_move, args=(uci,), daemon=True)
         thread.start()
+
+    def human_move_cb(self, msg: String):
+        """Teleport human's piece in Gazebo to keep sim in sync."""
+        uci = msg.data.strip()
+        try:
+            move      = chess.Move.from_uci(uci)
+            from_name = chess.square_name(move.from_square)
+            to_name   = chess.square_name(move.to_square)
+
+            # Teleport captured piece to graveyard
+            cap_model = self._piece_map.get(to_name)
+            if cap_model:
+                self._teleport_to_graveyard(cap_model)
+
+            # Teleport moving piece to destination
+            model = self._piece_map.get(from_name)
+            if model:
+                px, py, _ = self.square_to_xyz(move.to_square)
+                self._teleport(model, px, py, self._piece_z(model))
+
+            self._apply_move_to_map(move)
+
+        except Exception as e:
+            self.get_logger().warn(f'human_move_cb: {e}')
 
     def publish_status(self, status: str):
         msg = String()

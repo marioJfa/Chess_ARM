@@ -25,7 +25,7 @@ arm_controller:
       - position
       - velocity
     state_publish_rate: 50.0
-    action_monitor_rate: 20.0
+    action_monitor_rate: 50.0
     allow_partial_joints_goal: false
     open_loop_control: true
     allow_integration_in_goal_trajectories: true
@@ -46,7 +46,7 @@ gripper_controller:
       - position
       - velocity
     state_publish_rate: 50.0
-    action_monitor_rate: 20.0
+    action_monitor_rate: 50.0
     allow_partial_joints_goal: true
     open_loop_control: true
     allow_integration_in_goal_trajectories: true
