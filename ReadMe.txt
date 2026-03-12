@@ -101,3 +101,13 @@ ros2 topic pub /arm_controller/joint_trajectory \
         --added chess board
         --chess game Gui
         -- arm animation and standby position
+
+##0.4.5
+        --starting to seperate camera and piece teleport
+        relying only on cmaera to tell us where the white pieces are.
+
+        -- added a camera debug
+        -- board detection
+        -- piece detection
+        
+        --arm goes into standby with camera pointing to the board, scans the board for pieces

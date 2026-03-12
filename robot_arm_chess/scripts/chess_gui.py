@@ -56,6 +56,7 @@ class ChessGUI(Node):
 
         # Publishers
         self.human_pub = self.create_publisher(String, '/chess/human_move', 10)
+        self.cmd_pub   = self.create_publisher(String, '/chess/cmd',        10)
 
         # Subscribers
         self.create_subscription(String, '/chess/board_state',  self.board_cb,  10)
@@ -111,6 +112,18 @@ class ChessGUI(Node):
                   bg='#0d419d', fg='white',
                   font=('Courier', 9), bd=0, padx=8,
                   cursor='hand2').pack(side='left')
+
+        # Control buttons
+        ctrl_frame = tk.Frame(self.root, bg='#1a1a2e')
+        ctrl_frame.pack(pady=4)
+        tk.Button(ctrl_frame, text='Reset Game',
+                  command=self._reset_game,
+                  bg='#5a1a1a', fg='white', font=('Courier', 9),
+                  bd=0, padx=10, pady=4, cursor='hand2').pack(side='left', padx=4)
+        tk.Button(ctrl_frame, text='Remove Pieces',
+                  command=self._remove_pieces,
+                  bg='#1a4a2a', fg='white', font=('Courier', 9),
+                  bd=0, padx=10, pady=4, cursor='hand2').pack(side='left', padx=4)
 
         # Last moves log
         self.log_text = tk.Text(self.root, width=44, height=6,
@@ -201,6 +214,21 @@ class ChessGUI(Node):
                 self._log(f'Illegal: {uci}')
         except ValueError:
             self._log(f'Invalid: {uci}')
+
+    def _reset_game(self):
+        msg = String()
+        msg.data = 'RESET'
+        self.cmd_pub.publish(msg)
+        self.board = chess.Board()
+        self.last_arm_move = None
+        self._log('--- Game reset ---')
+        self.root.after(0, self._draw_board)
+
+    def _remove_pieces(self):
+        msg = String()
+        msg.data = 'REMOVE_PIECES'
+        self.cmd_pub.publish(msg)
+        self._log('Removing pieces for vision calibration...')
 
     def _log(self, text: str):
         self.log_text.config(state='normal')

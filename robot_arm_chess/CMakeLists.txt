@@ -10,6 +10,7 @@ install(PROGRAMS
   scripts/chess_engine_node.py
   scripts/chess_arm_node.py
   scripts/chess_gui.py
+  scripts/chess_vision_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

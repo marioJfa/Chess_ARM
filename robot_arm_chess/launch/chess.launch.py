@@ -125,6 +125,20 @@ def generate_launch_description():
         output='screen'
     )
 
+    chess_vision_node = Node(
+        package='robot_arm_chess',
+        executable='chess_vision_node.py',
+        name='chess_vision_node',
+        parameters=[board_cfg],
+        output='screen'
+    )
+
+    debug_camera = ExecuteProcess(
+        cmd=['ros2', 'run', 'rqt_image_view', 'rqt_image_view',
+             '/chess/vision/debug_image'],
+        output='screen'
+    )
+
     return LaunchDescription([
         gazebo,
         robot_state_publisher,
@@ -137,4 +151,6 @@ def generate_launch_description():
         TimerAction(period=8.0,  actions=[chess_engine_node]),
         TimerAction(period=8.0,  actions=[chess_arm_node]),
         TimerAction(period=10.0, actions=[chess_gui]),
+        TimerAction(period=10.0, actions=[chess_vision_node]),
+        TimerAction(period=12.0, actions=[debug_camera]),
     ])

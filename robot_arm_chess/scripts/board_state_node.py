@@ -43,10 +43,19 @@ class BoardStateNode(Node):
             String, '/chess/human_move', self.human_move_cb, 10)
         self.arm_sub = self.create_subscription(
             String, '/chess/arm_move', self.arm_move_cb, 10)
+        self.cmd_sub = self.create_subscription(
+            String, '/chess/cmd', self.cmd_cb, 10)
 
         # Publish initial state
         self.publish_state()
         self.print_board()
+
+    def cmd_cb(self, msg: String):
+        if msg.data == 'RESET':
+            self.board = chess.Board()
+            self.publish_state()
+            self.print_board()
+            self.get_logger().info('Board reset to starting position')
 
     def human_move_cb(self, msg: String):
         uci = msg.data.strip()

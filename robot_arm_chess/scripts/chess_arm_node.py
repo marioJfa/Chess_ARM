@@ -45,7 +45,7 @@ JOINT_LIMITS = {
 
 # Piece z-center above ground when sitting on the board (board top = 0.02)
 PIECE_Z  = 0.038   # back-rank pieces (cylinder length 0.035)
-PAWN_Z   = 0.034   # pawns (cylinder length 0.028)
+PAWN_Z   = 0.035   # pawns (cylinder length 0.028)
 
 
 class ChessArmNode(Node):
@@ -64,11 +64,13 @@ class ChessArmNode(Node):
         self.declare_parameter('gripper_open',  0.0)
         self.declare_parameter('gripper_closed',1.05)
         self.declare_parameter('move_duration', 2.5)
+        self.declare_parameter('board_flip', False)
 
-        self.ox      = self.get_parameter('origin_x').value
-        self.oy      = self.get_parameter('origin_y').value
-        self.oz      = self.get_parameter('origin_z').value
-        self.sq      = self.get_parameter('square_size').value
+        self.ox        = self.get_parameter('origin_x').value
+        self.oy        = self.get_parameter('origin_y').value
+        self.oz        = self.get_parameter('origin_z').value
+        self.sq        = self.get_parameter('square_size').value
+        self.board_flip = self.get_parameter('board_flip').value
         self.z_grasp = self.get_parameter('grasp_height').value
         self.z_lift  = self.get_parameter('lift_height').value
         self.z_hover = self.get_parameter('hover_height').value
@@ -99,12 +101,14 @@ class ChessArmNode(Node):
             String, '/chess/board_state', self.board_state_cb, 10)
         self.human_sub = self.create_subscription(
             String, '/chess/human_move', self.human_move_cb, 10)
+        self.cmd_sub = self.create_subscription(
+            String, '/chess/cmd', self.cmd_cb, 10)
 
         self.publish_status('IDLE')
         self.get_logger().info('Chess arm node ready')
 
-        # Go to standby pose after controllers come up
-        self._standby_timer = self.create_timer(3.0, self._go_standby_once)
+        # Move to standby once controllers are fully loaded (~6s after node start)
+        self._standby_timer = self.create_timer(6.0, self._go_standby_once)
 
     # ── Piece map ──────────────────────────────────────────────────────────────
     def _init_piece_map(self):
@@ -118,11 +122,61 @@ class ChessArmNode(Node):
             self._piece_map[f'{files[i]}2'] = f'wp_p{files[i]}2'
             self._piece_map[f'{files[i]}7'] = f'bp_p{files[i]}7'
 
+    def cmd_cb(self, msg: String):
+        cmd = msg.data.strip()
+        if cmd == 'RESET':
+            self._reset_all_pieces()
+        elif cmd == 'REMOVE_PIECES':
+            self._remove_all_pieces()
+
+    def _reset_all_pieces(self):
+        """Teleport all 32 pieces back to their starting squares."""
+        files = 'abcdefgh'
+        back  = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r']
+        for i, p in enumerate(back):
+            sq = chess.square(i, 0)
+            x, y, _ = self.square_to_xyz(sq)
+            self._teleport(f'wp_{p}{files[i]}1', x, y, PIECE_Z)
+            sq = chess.square(i, 7)
+            x, y, _ = self.square_to_xyz(sq)
+            self._teleport(f'bp_{p}{files[i]}8', x, y, PIECE_Z)
+        for i in range(8):
+            sq = chess.square(i, 1)
+            x, y, _ = self.square_to_xyz(sq)
+            self._teleport(f'wp_p{files[i]}2', x, y, PAWN_Z)
+            sq = chess.square(i, 6)
+            x, y, _ = self.square_to_xyz(sq)
+            self._teleport(f'bp_p{files[i]}7', x, y, PAWN_Z)
+        self.board = chess.Board()
+        self._grave_idx = 0
+        self._init_piece_map()
+        self.busy = False
+        self.publish_status('IDLE')
+        self.get_logger().info('All pieces reset to starting positions')
+
+    def _remove_all_pieces(self):
+        """Teleport all 32 pieces off-board for vision calibration."""
+        files = 'abcdefgh'
+        back  = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r']
+        models = []
+        for i, p in enumerate(back):
+            models.append((f'wp_{p}{files[i]}1', PIECE_Z))
+            models.append((f'bp_{p}{files[i]}8', PIECE_Z))
+        for i in range(8):
+            models.append((f'wp_p{files[i]}2', PAWN_Z))
+            models.append((f'bp_p{files[i]}7', PAWN_Z))
+        for idx, (model, _) in enumerate(models):
+            # Park pieces in a row behind the board (negative y)
+            x = self.ox + (idx % 16) * 0.045
+            y = self.oy - 0.15 - (idx // 16) * 0.06
+            self._teleport(model, x, y, 0.05)
+        self.get_logger().info(f'Removed {len(models)} pieces for vision calibration')
+
     def _teleport(self, model_name, x, y, z):
         """Move a Gazebo model to (x, y, z) via gz service."""
         req = (f'name: "{model_name}", '
-               f'pose: {{position: {{x: {x:.4f}, y: {y:.4f}, z: {z:.4f}}}, '
-               f'orientation: {{x: 0, y: 0, z: 0, w: 1}}}}')
+               f'position: {{x: {x:.4f}, y: {y:.4f}, z: {z:.4f}}}, '
+               f'orientation: {{x: 0, y: 0, z: 0, w: 1}}')
         subprocess.Popen(
             ['gz', 'service', '-s', '/world/arm_world/set_pose',
              '--reqtype', 'gz.msgs.Pose',
@@ -139,7 +193,7 @@ class ChessArmNode(Node):
         # Dump pieces to the right of the board
         x = self.ox + col * self.sq
         y = self.oy + 8 * self.sq + 0.06 + row * 0.045
-        self._teleport(model_name, x, y, PIECE_Z)
+        self._teleport(model_name, x, y, self._piece_z(model_name))
 
     def _piece_z(self, model_name):
         """Return correct z for a piece model sitting on the board."""
@@ -160,8 +214,12 @@ class ChessArmNode(Node):
     def square_to_xyz(self, square: chess.Square, z_offset: float = 0.0):
         file = chess.square_file(square)
         rank = chess.square_rank(square)
-        x = self.ox + rank * self.sq
-        y = self.oy + file * self.sq
+        if self.board_flip:
+            x = self.ox + (7 - rank) * self.sq + self.sq / 2
+            y = self.oy + (7 - file) * self.sq + self.sq / 2
+        else:
+            x = self.ox + rank * self.sq + self.sq / 2
+            y = self.oy + file * self.sq + self.sq / 2
         z = self.oz + z_offset
         return x, y, z
 
@@ -268,11 +326,12 @@ class ChessArmNode(Node):
         self.send_arm(self._standby_pose(), duration=2.0)
 
     def _standby_pose(self):
-        return {'base_yaw': 0.0, 'shoulder_roll': 0.0,
-                'shoulder_pitch': 1.2, 'elbow_pitch': -0.70}
+        return {'base_yaw': 0.015, 'shoulder_roll': -0.24,
+                'shoulder_pitch': 1.07, 'elbow_pitch': 0.175}
 
     def _go_standby_once(self):
         self._standby_timer.cancel()
+        self.get_logger().info('=== Init: moving arm to standby ===')
         self.send_arm(self._standby_pose(), duration=2.5)
 
     # ── Main move execution ───────────────────────────────────────────────────
@@ -314,6 +373,7 @@ class ChessArmNode(Node):
             self.publish_status('ERROR')
         finally:
             self.busy = False
+            self.publish_status('IDLE')
 
     # ── Callbacks ─────────────────────────────────────────────────────────────
     def board_state_cb(self, msg: String):
