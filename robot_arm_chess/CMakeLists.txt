@@ -11,6 +11,7 @@ install(PROGRAMS
   scripts/chess_arm_node.py
   scripts/chess_gui.py
   scripts/chess_vision_node.py
+  scripts/vision_calib_gui.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -20,6 +21,7 @@ install(DIRECTORY
   config
   worlds
   meshes
+  materials
   DESTINATION share/${PROJECT_NAME}
 )
 

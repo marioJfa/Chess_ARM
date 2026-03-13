@@ -20,6 +20,7 @@ from rclpy.node import Node
 from std_msgs.msg import String
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
+from rcl_interfaces.msg import SetParametersResult
 import math
 import chess
 import threading
@@ -66,17 +67,30 @@ class ChessArmNode(Node):
         self.declare_parameter('move_duration', 2.5)
         self.declare_parameter('board_flip', False)
 
-        self.ox        = self.get_parameter('origin_x').value
-        self.oy        = self.get_parameter('origin_y').value
-        self.oz        = self.get_parameter('origin_z').value
-        self.sq        = self.get_parameter('square_size').value
+        # Standby pose params (live-tunable from GUI)
+        self.declare_parameter('standby_base_yaw',       0.015)
+        self.declare_parameter('standby_shoulder_roll',  -0.3)
+        self.declare_parameter('standby_shoulder_pitch',  1.05)
+        self.declare_parameter('standby_elbow_pitch',     0.28)
+
+        self.ox         = self.get_parameter('origin_x').value
+        self.oy         = self.get_parameter('origin_y').value
+        self.oz         = self.get_parameter('origin_z').value
+        self.sq         = self.get_parameter('square_size').value
         self.board_flip = self.get_parameter('board_flip').value
-        self.z_grasp = self.get_parameter('grasp_height').value
-        self.z_lift  = self.get_parameter('lift_height').value
-        self.z_hover = self.get_parameter('hover_height').value
-        self.g_open  = self.get_parameter('gripper_open').value
-        self.g_close = self.get_parameter('gripper_closed').value
-        self.dur     = self.get_parameter('move_duration').value
+        self.z_grasp    = self.get_parameter('grasp_height').value
+        self.z_lift     = self.get_parameter('lift_height').value
+        self.z_hover    = self.get_parameter('hover_height').value
+        self.g_open     = self.get_parameter('gripper_open').value
+        self.g_close    = self.get_parameter('gripper_closed').value
+        self.dur        = self.get_parameter('move_duration').value
+
+        self.sb_base_yaw       = self.get_parameter('standby_base_yaw').value
+        self.sb_shoulder_roll  = self.get_parameter('standby_shoulder_roll').value
+        self.sb_shoulder_pitch = self.get_parameter('standby_shoulder_pitch').value
+        self.sb_elbow_pitch    = self.get_parameter('standby_elbow_pitch').value
+
+        self.add_on_set_parameters_callback(self._on_param_change)
 
         self.board = chess.Board()
         self.busy  = False
@@ -85,6 +99,8 @@ class ChessArmNode(Node):
         self._piece_map  = {}
         self._grave_idx  = 0
         self._init_piece_map()
+
+        self._latest_joint_states = None   # updated by /joint_states subscriber
 
         # Publishers
         self.arm_pub     = self.create_publisher(
@@ -95,6 +111,9 @@ class ChessArmNode(Node):
         self.status_pub  = self.create_publisher(String, '/chess/arm_status', 10)
 
         # Subscribers
+        from sensor_msgs.msg import JointState
+        self.js_sub = self.create_subscription(
+            JointState, '/joint_states', self._joint_states_cb, 10)
         self.move_sub = self.create_subscription(
             String, '/chess/engine_move', self.engine_move_cb, 10)
         self.board_sub = self.create_subscription(
@@ -110,9 +129,31 @@ class ChessArmNode(Node):
         # Move to standby once controllers are fully loaded (~6s after node start)
         self._standby_timer = self.create_timer(6.0, self._go_standby_once)
 
+    # ── Live param updates ────────────────────────────────────────────────────
+    def _on_param_change(self, params):
+        for p in params:
+            n, v = p.name, p.value
+            if n == 'origin_x':            self.ox         = v
+            elif n == 'origin_y':          self.oy         = v
+            elif n == 'origin_z':          self.oz         = v
+            elif n == 'square_size':       self.sq         = v
+            elif n == 'board_flip':        self.board_flip = v
+            elif n == 'grasp_height':      self.z_grasp    = v
+            elif n == 'lift_height':       self.z_lift     = v
+            elif n == 'hover_height':      self.z_hover    = v
+            elif n == 'gripper_open':      self.g_open     = v
+            elif n == 'gripper_closed':    self.g_close    = v
+            elif n == 'move_duration':     self.dur        = v
+            elif n == 'standby_base_yaw':       self.sb_base_yaw       = v
+            elif n == 'standby_shoulder_roll':  self.sb_shoulder_roll  = v
+            elif n == 'standby_shoulder_pitch': self.sb_shoulder_pitch = v
+            elif n == 'standby_elbow_pitch':    self.sb_elbow_pitch    = v
+        return SetParametersResult(successful=True)
+
     # ── Piece map ──────────────────────────────────────────────────────────────
     def _init_piece_map(self):
-        """Build initial chess square → Gazebo model name mapping."""
+        """Rebuild chess square → Gazebo model name mapping from scratch."""
+        self._piece_map = {}   # clear stale entries from any previous game
         back = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r']
         files = 'abcdefgh'
         for i, p in enumerate(back):
@@ -126,8 +167,23 @@ class ChessArmNode(Node):
         cmd = msg.data.strip()
         if cmd == 'RESET':
             self._reset_all_pieces()
+        elif cmd == 'RECAL':
+            # Calibration: remove pieces so vision can capture a clean empty-board reference
+            self._remove_all_pieces()
         elif cmd == 'REMOVE_PIECES':
             self._remove_all_pieces()
+        elif cmd == 'RETURN_PIECES':
+            self._return_pieces_to_board()
+        elif cmd == 'STANDBY':
+            threading.Thread(target=self._go_standby_cmd, daemon=True).start()
+
+    def _go_standby_cmd(self):
+        if self.busy:
+            self.get_logger().warn('Arm busy — STANDBY ignored')
+            return
+        self.get_logger().info('STANDBY command received')
+        self.send_arm(self._standby_pose(), duration=2.0)
+        self._wait_for_arm_stop()
 
     def _reset_all_pieces(self):
         """Teleport all 32 pieces back to their starting squares."""
@@ -172,6 +228,16 @@ class ChessArmNode(Node):
             self._teleport(model, x, y, 0.05)
         self.get_logger().info(f'Removed {len(models)} pieces for vision calibration')
 
+    def _return_pieces_to_board(self):
+        """Teleport each tracked piece back to its current square (no game reset)."""
+        count = 0
+        for sq_name, model in self._piece_map.items():
+            sq = chess.parse_square(sq_name)
+            x, y, _ = self.square_to_xyz(sq)
+            self._teleport(model, x, y, self._piece_z(model))
+            count += 1
+        self.get_logger().info(f'Returned {count} pieces to current board positions')
+
     def _teleport(self, model_name, x, y, z):
         """Move a Gazebo model to (x, y, z) via gz service."""
         req = (f'name: "{model_name}", '
@@ -209,6 +275,27 @@ class ChessArmNode(Node):
         model = self._piece_map.pop(from_name, None)
         if model:
             self._piece_map[to_name] = model
+
+    def _joint_states_cb(self, msg):
+        self._latest_joint_states = msg
+
+    def _wait_for_arm_stop(self, vel_threshold=0.01, timeout=15.0):
+        """Block until all arm joints are stationary (velocity < threshold).
+        Called after the last trajectory of a sequence so IDLE is only published
+        once the arm has physically stopped moving."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            js = self._latest_joint_states
+            if js is not None:
+                vel_map = dict(zip(js.name, js.velocity))
+                vels = [abs(vel_map.get(j, 1.0)) for j in ARM_JOINTS]
+                if all(v < vel_threshold for v in vels):
+                    self.get_logger().info(
+                        f'Arm stopped  vels={[f"{v:.4f}" for v in vels]}  — waiting 1s to settle')
+                    time.sleep(1.0)
+                    return
+            time.sleep(0.05)
+        self.get_logger().warn('_wait_for_arm_stop: timeout — publishing IDLE anyway')
 
     # ── Board geometry ─────────────────────────────────────────────────────────
     def square_to_xyz(self, square: chess.Square, z_offset: float = 0.0):
@@ -326,13 +413,19 @@ class ChessArmNode(Node):
         self.send_arm(self._standby_pose(), duration=2.0)
 
     def _standby_pose(self):
-        return {'base_yaw': 0.015, 'shoulder_roll': -0.24,
-                'shoulder_pitch': 1.07, 'elbow_pitch': 0.175}
+        return {
+            'base_yaw':       self.sb_base_yaw,
+            'shoulder_roll':  self.sb_shoulder_roll,
+            'shoulder_pitch': self.sb_shoulder_pitch,
+            'elbow_pitch':    self.sb_elbow_pitch,
+        }
 
     def _go_standby_once(self):
         self._standby_timer.cancel()
         self.get_logger().info('=== Init: moving arm to standby ===')
         self.send_arm(self._standby_pose(), duration=2.5)
+        self._wait_for_arm_stop()
+        self.publish_status('IDLE')
 
     # ── Main move execution ───────────────────────────────────────────────────
     def execute_move(self, uci: str):
@@ -361,6 +454,7 @@ class ChessArmNode(Node):
             self._apply_move_to_map(move)
 
             self.return_home()
+            self._wait_for_arm_stop()   # arm physically stopped → safe to sample
 
             msg = String()
             msg.data = uci

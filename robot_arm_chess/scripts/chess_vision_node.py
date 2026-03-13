@@ -3,11 +3,10 @@
 chess_vision_node.py — Board-first piece tracking.
 
 Pipeline:
-  SEARCHING  → scan every frame for the chess board using findChessboardCorners.
-               Falls back to tile-color detection if corners not found.
-  BOARD_FOUND→ board located, grid centres computed, waiting for arm IDLE
-               to capture reference frame.
-  TRACKING   → frame-diff at each grid centre to detect piece moves.
+  SEARCHING     → Hough line detection on tile edges each frame (arm must be idle)
+  WAIT_EMPTY    → board found, waiting for "Calibrate Camera" command
+  CAPTURING_REF → collecting empty-board reference frames
+  TRACKING      → frame-diff vs empty ref to detect pieces + movement
 
 Publishes:
   /chess/vision/white_squares  — JSON list of squares with white pieces
@@ -18,40 +17,74 @@ Subscribes:
   /camera/camera_info
   /chess/arm_status
   /chess/last_move
+  /chess/cmd
 """
 
 import json
-import math
 
 import cv2
 import numpy as np
 import rclpy
 from rclpy.node import Node
+from rcl_interfaces.msg import SetParametersResult
 from sensor_msgs.msg import CameraInfo, Image
 from std_msgs.msg import String
 
-import tf2_ros
 from cv_bridge import CvBridge
 
 FILES = 'abcdefgh'
-ALL_SQUARES = [f + str(r) for r in range(1, 9) for f in FILES]
-WHITE_START  = set([f + '1' for f in FILES] + [f + '2' for f in FILES])
 
-# SDF colours for tile detection (HSV ranges, Gazebo-rendered)
-# Light tiles: ambient 0.95 0.95 0.85 → creamy off-white
-LIGHT_HSV_LO = np.array([40,  0, 160], np.uint8)
-LIGHT_HSV_HI = np.array([150, 150, 255], np.uint8)
-# Dark tiles:  ambient 0.15 0.10 0.05 → very dark brown
-DARK_HSV_LO  = np.array([ 5, 40,  10], np.uint8)
-DARK_HSV_HI  = np.array([70,180,  70], np.uint8)
+# The 32 squares that are occupied at the start of any chess game (ranks 1,2,7,8)
+STARTING_SQUARES = frozenset(
+    f'{f}{r}' for f in 'abcdefgh' for r in (1, 2, 7, 8)
+)
+
+# ── ArUco board reference ──────────────────────────────────────────────────────
+# Four markers (IDs 0-3) placed at the outer corners of the board.
+# Physical placement (viewed from white's side):
+#   ID 0 → a1 corner  (bottom-left)
+#   ID 1 → h1 corner  (bottom-right)
+#   ID 2 → a8 corner  (top-left)
+#   ID 3 → h8 corner  (top-right)
+#
+# ArUco corner order per marker: [top-left, top-right, bottom-right, bottom-left]
+# "Inner corner" = the corner of the marker that touches the board playing area.
+ARUCO_DICT   = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+ARUCO_PARAMS = cv2.aruco.DetectorParameters_create()   # OpenCV 4.6 API
+
+# Index into marker.corners[0] that gives the inner (board-facing) corner
+MARKER_INNER = {0: 1, 1: 0, 2: 2, 3: 3}
+
+# Board-space position (in squares) of each inner corner — a1=(0,0), h8=(8,8)
+# x increases rank1→rank8,  y increases a-file→h-file
+# Verified from chess_world.sdf geometry: board at world (0.3575, -0.0175),
+# sq_a1 local (-0.135,-0.135), marker centres at (0.1555, ±0.2195/0.2295).
+# Gap from board edge to inner corner = 0.0145 m → 0.0145/0.045 = 0.322 squares.
+_D = 0.322   # inner-corner offset from board playing-area edge in squares
+
+# Marker physical size = 0.060m (chess_world.sdf), square size = 0.045m
+# → MARKER_SQ = 0.060/0.045 = 4/3 board squares exactly.
+MARKER_SQ = 4.0 / 3.0
+
+# Inner-corner board-space positions (kept for reference; _detect_via_aruco uses
+# live self.aruco_offset and builds ALL 16 corner positions dynamically)
+MARKER_BOARD = {
+    0: (-_D,       -_D),
+    1: (8.0 + _D,  -_D),
+    2: (-_D,       8.0 + _D),
+    3: (8.0 + _D,  8.0 + _D),
+}
+
+BOARD_SCALE = 100   # virtual pixels per square used for homography arithmetic
 
 
 class ChessVisionNode(Node):
     # States
     SEARCHING     = 'SEARCHING'      # trying to find board grid
-    WAIT_EMPTY    = 'WAIT_EMPTY'     # board found, waiting for "Remove Pieces"
-    CAPTURING_REF = 'CAPTURING_REF'  # collecting empty-board frames
-    TRACKING      = 'TRACKING'       # live piece detection + move tracking
+    WAIT_EMPTY    = 'WAIT_EMPTY'     # board found, waiting for "Calibrate Camera"
+    CAPTURING_REF = 'CAPTURING_REF'  # collecting empty-board reference frames
+    WAIT_PIECES   = 'WAIT_PIECES'    # ref done, waiting for all 32 pieces to be placed
+    TRACKING      = 'TRACKING'       # live piece detection + move tracking (diff vs ref + prev)
 
     REF_FRAMES_NEEDED = 15           # frames to average for empty-board ref
 
@@ -62,42 +95,60 @@ class ChessVisionNode(Node):
         self.declare_parameter('origin_y',         -0.175)
         self.declare_parameter('origin_z',          0.02)
         self.declare_parameter('square_size',       0.045)
-        self.declare_parameter('sample_radius',     10)
-        self.declare_parameter('change_threshold',  18.0)
-        self.declare_parameter('piece_threshold',   22.0)
+        self.declare_parameter('sample_radius',       10)
+        self.declare_parameter('change_threshold',    18.0)
+        self.declare_parameter('piece_threshold',     22.0)
+        self.declare_parameter('debug_diff',          False)  # show per-square diff overlay
+        self.declare_parameter('aruco_inner_offset',  0.322)    # _D: marker inner corner → board edge (squares)
+        self.declare_parameter('marker_sq_size',      MARKER_SQ)  # marker side in board squares (0.060/0.045)
+        self.declare_parameter('grid_dx',             0)      # pixel nudge right (+ ) / left  (-)
+        self.declare_parameter('grid_dy',             0)      # pixel nudge down  (+ ) / up    (-)
 
-        self.ox          = self.get_parameter('origin_x').value
-        self.oy          = self.get_parameter('origin_y').value
-        self.oz          = self.get_parameter('origin_z').value
-        self.sq          = self.get_parameter('square_size').value
-        self.sample_r    = self.get_parameter('sample_radius').value
-        self.change_thr  = self.get_parameter('change_threshold').value
-        self.piece_thr   = self.get_parameter('piece_threshold').value
+        self.ox               = self.get_parameter('origin_x').value
+        self.oy               = self.get_parameter('origin_y').value
+        self.oz               = self.get_parameter('origin_z').value
+        self.sq               = self.get_parameter('square_size').value
+        self.sample_r         = self.get_parameter('sample_radius').value
+        self.change_thr       = self.get_parameter('change_threshold').value
+        self.piece_thr        = self.get_parameter('piece_threshold').value
+        self.debug_diff       = self.get_parameter('debug_diff').value
+        self.aruco_offset     = self.get_parameter('aruco_inner_offset').value
+        self.marker_sq        = self.get_parameter('marker_sq_size').value
+        self.grid_dx          = self.get_parameter('grid_dx').value
+        self.grid_dy          = self.get_parameter('grid_dy').value
 
-        self.bridge       = CvBridge()
-        self.camera_info  = None
-        self.arm_idle     = True
-        self.last_move    = None
+        self.add_on_set_parameters_callback(self._on_param_change)
+
+        self.bridge           = CvBridge()
+        self.camera_info      = None
+        self.arm_idle         = False  # False until first IDLE/DONE message received
+        self._arm_just_idled  = False  # True for one detection cycle on MOVING→IDLE edge
+        self.last_move           = None
+        self._last_det_method    = ''     # which detector last found the board
 
         # Vision state
         self.state          = self.SEARCHING
+        self.homography     = None  # board-space → pixel-space (set by ArUco)
+        self._last_aruco_corners   = None  # {mid: 4×2 px array} saved for live recompute
+        self._last_aruco_frame_hw  = None  # (h, w) of frame when ArUco last ran
         self.grid_centres   = {}    # sq → (u, v)  — in-frame only
         self.empty_ref      = {}    # sq → mean gray brightness of empty square
         self.prev_idle_gray = {}    # sq → mean gray at last idle frame
         self.piece_sqs      = set() # squares currently occupied (diff vs empty_ref)
         self.changed_sqs    = set() # squares that changed since last idle frame
 
+        # Game history — one entry per arm-idle snapshot in TRACKING
+        self.board_history  = []    # [{'frame': int, 'move': str, 'pieces': set, 'changed': set}]
+
         # Ref capture accumulator
         self._ref_acc    = {}   # sq → list of brightness samples
         self._ref_count  = 0
+        self._ref_delay  = 0   # frames to skip before accumulating (settle time)
+        self._recal_mode = False  # True → skip WAIT_PIECES after ref capture (mid-game recal)
 
         # Logging throttle
         self._log_counter  = 0
         self._log_interval = 30
-
-        # TF (fallback projection)
-        self.tf_buffer   = tf2_ros.Buffer()
-        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
         self.create_subscription(CameraInfo, '/camera/camera_info', self._info_cb,   10)
         self.create_subscription(Image,      '/camera/image_raw',   self._image_cb,   1)
@@ -121,31 +172,105 @@ class ChessVisionNode(Node):
         self.camera_info = msg
 
     def _status_cb(self, msg):
-        prev = self.arm_idle
+        was_idle      = self.arm_idle
         self.arm_idle = msg.data in ('IDLE', 'DONE')
-        if self.arm_idle != prev:
-            self.get_logger().info(f'Arm status → {msg.data}')
+
+        if self.arm_idle and not was_idle:
+            self._arm_just_idled = True
+            self.get_logger().info(
+                f'Arm idle — vision detection triggered  [state={self.state}]')
+        elif not self.arm_idle and was_idle:
+            self.get_logger().info(f'Arm moving — vision paused  [state={self.state}]')
 
     def _move_cb(self, msg):
         self.last_move = msg.data.strip()
         self.get_logger().info(f'Last move: {self.last_move}')
 
+    def _on_param_change(self, params):
+        """Live parameter updates — no restart needed."""
+        grid_changed = False
+        for p in params:
+            if p.name == 'piece_threshold':
+                self.piece_thr = float(p.value)
+                self.get_logger().info(f'piece_threshold → {self.piece_thr}')
+            elif p.name == 'change_threshold':
+                self.change_thr = float(p.value)
+                self.get_logger().info(f'change_threshold → {self.change_thr}')
+            elif p.name == 'sample_radius':
+                self.sample_r = int(p.value)
+                self.get_logger().info(f'sample_radius → {self.sample_r}')
+            elif p.name == 'debug_diff':
+                self.debug_diff = bool(p.value)
+                self.get_logger().info(f'debug_diff → {self.debug_diff}')
+            elif p.name == 'aruco_inner_offset':
+                self.aruco_offset = float(p.value)
+                self.get_logger().info(f'aruco_inner_offset → {self.aruco_offset}')
+                grid_changed = True
+            elif p.name == 'marker_sq_size':
+                self.marker_sq = float(p.value)
+                self.get_logger().info(f'marker_sq_size → {self.marker_sq}')
+                grid_changed = True
+            elif p.name == 'grid_dx':
+                self.grid_dx = int(p.value)
+                self.get_logger().info(f'grid_dx → {self.grid_dx}')
+                grid_changed = True
+            elif p.name == 'grid_dy':
+                self.grid_dy = int(p.value)
+                self.get_logger().info(f'grid_dy → {self.grid_dy}')
+                grid_changed = True
+        if grid_changed:
+            # Rebuild H + grid_centres immediately from saved ArUco corners so the
+            # grid overlay and nudge sliders respond live without waiting for idle.
+            self._recompute_aruco_homography()
+        return SetParametersResult(successful=True)
+
     def _cmd_cb(self, msg):
         cmd = msg.data.strip()
-        if cmd == 'REMOVE_PIECES':
-            if self.state in (self.WAIT_EMPTY, self.TRACKING, self.SEARCHING):
-                self.state = self.CAPTURING_REF
+        if cmd == 'RECAL':
+            if self.grid_centres:
+                self._recompute_aruco_homography()
                 self._ref_acc   = {}
                 self._ref_count = 0
+                self.empty_ref  = {}
+                if self.state == self.WAIT_EMPTY:
+                    # Initial setup: board just found, no pieces to remove → short settle,
+                    # go to WAIT_PIECES afterward so user can place all 32 pieces
+                    self._ref_delay  = 10
+                    self._recal_mode = False
+                    self.get_logger().info('RECAL (initial) — capturing empty board reference')
+                else:
+                    # Mid-game recal: arm removes pieces first (async Popen), use longer
+                    # settle delay, then skip WAIT_PIECES and go straight back to TRACKING
+                    self._ref_delay  = 60   # ~5s at 12Hz — wait for Gazebo teleports to complete
+                    self._recal_mode = True
+                    self.get_logger().info('RECAL (mid-game) — capturing empty board reference, will return to TRACKING')
+                self.state = self.CAPTURING_REF
+            else:
+                self.get_logger().warn('RECAL ignored — no board grid yet')
+        elif cmd == 'REMOVE_PIECES':
+            if self.state in (self.WAIT_EMPTY, self.TRACKING, self.SEARCHING):
+                self.state       = self.CAPTURING_REF
+                self._ref_acc    = {}
+                self._ref_count  = 0
+                self._ref_delay  = 20  # skip ~1.5s of frames for pieces to settle
                 self.get_logger().info(
-                    'REMOVE_PIECES received — entering CAPTURING_REF')
+                    'REMOVE_PIECES received — entering CAPTURING_REF (settling...)')
         elif cmd == 'RESET':
-            self.state        = self.SEARCHING
-            self.grid_centres = {}
-            self.empty_ref    = {}
-            self.piece_sqs    = set()
-            self.changed_sqs  = set()
-            self.get_logger().info('RESET — restarting board search')
+            # Game reset: keep the board grid and empty_ref so detection keeps working.
+            # Only clear piece-tracking state so the game starts fresh.
+            self.piece_sqs     = set()
+            self.changed_sqs   = set()
+            self.board_history = []
+            if self.grid_centres and self.empty_ref:
+                self.state = self.TRACKING
+                self.get_logger().info('RESET — game reset, staying in TRACKING')
+            elif self.grid_centres:
+                self.state = self.WAIT_EMPTY
+                self.get_logger().info('RESET — game reset, back to WAIT_EMPTY (no empty ref)')
+            else:
+                self.state             = self.SEARCHING
+                self._last_det_method  = ''
+                self.get_logger().info('RESET — full restart (no grid found yet)')
 
     def _image_cb(self, msg):
         if self.camera_info is None:
@@ -156,12 +281,11 @@ class ChessVisionNode(Node):
 
         img  = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8').copy()
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        hsv  = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
         self._overlay_edges(img, gray)
 
         if self.state == self.SEARCHING:
-            self._run_searching(img, gray, hsv)
+            self._run_searching(img, gray)
 
         elif self.state == self.WAIT_EMPTY:
             self._draw_board_outline(img)
@@ -173,66 +297,100 @@ class ChessVisionNode(Node):
             self._draw_tile_grid(img)
             if self.arm_idle:
                 self._accumulate_ref(gray, img)
+            else:
+                h, w = img.shape[:2]
+                cv2.putText(img, 'Waiting for arm to stop...', (8, h - 14),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0),       4)
+                cv2.putText(img, 'Waiting for arm to stop...', (8, h - 14),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (100, 100, 255), 1)
+
+        elif self.state == self.WAIT_PIECES:
+            self._run_wait_pieces(img, gray)
+            self._draw_diff_overlay(img, gray)          # always on in tuning state
 
         elif self.state == self.TRACKING:
             self._run_tracking(img, gray)
+            if self.debug_diff:
+                self._draw_diff_overlay(img, gray)      # opt-in during tracking
 
         self._draw_hud(img)
         self.debug_pub.publish(self.bridge.cv2_to_imgmsg(img, encoding='bgr8'))
 
     # ── State runners ─────────────────────────────────────────────────────────
 
-    def _run_searching(self, img, gray, hsv):
-        self._draw_tile_candidates(img, hsv)
+    def _run_searching(self, img, gray):
         self._log_counter += 1
 
-        found, method = False, None
-        if self._detect_via_corners(gray):
-            found, method = True, 'chessboard corners'
-        elif self._detect_via_tiles(hsv):
-            found, method = True, 'tile colour'
-        elif self._detect_via_tf():
-            found, method = True, 'TF projection'
+        if not self.arm_idle:
+            msg = 'Waiting for arm/status IDLE...'
+            cv2.putText(img, msg, (8, img.shape[0] - 14),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0),       4)
+            cv2.putText(img, msg, (8, img.shape[0] - 14),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (100, 100, 255), 1)
+            return
 
+        # Try all detectors every idle frame until board is found
+        found, method = self._run_all_board_detectors(gray, img)
         if found:
-            n = len(self.grid_centres)
+            self._last_det_method = method
             self.get_logger().info(
-                f'Board found via {method} — {n} in-frame squares')
+                f'Board found via {method} — {len(self.grid_centres)} in-frame squares')
             self.state = self.WAIT_EMPTY
         else:
             if self._log_counter % self._log_interval == 0:
                 self.get_logger().info(
-                    f'[SEARCHING] frame={self._log_counter}  '
-                    f'arm_idle={self.arm_idle}')
-            # Still show chessboard corner attempt
-            flags = cv2.CALIB_CB_ADAPTIVE_THRESH | cv2.CALIB_CB_NORMALIZE_IMAGE
-            ret, corners = cv2.findChessboardCorners(gray, (7, 7), flags=flags)
-            if ret:
-                cv2.drawChessboardCorners(img, (7, 7), corners, ret)
+                    f'[SEARCHING] frame={self._log_counter} — no board detected')
 
     def _run_tracking(self, img, gray):
-        if self.arm_idle and self.empty_ref:
-            # Detect pieces as diff vs empty reference
-            self.piece_sqs = set()
-            for sq, uv in self.grid_centres.items():
-                cur   = self._sample(gray, uv)
-                empty = self.empty_ref.get(sq)
-                if empty is not None and abs(cur - empty) > self.piece_thr:
-                    self.piece_sqs.add(sq)
+        self._log_counter += 1
 
-            # Detect changes vs previous idle frame
-            self.changed_sqs = set()
-            for sq, uv in self.grid_centres.items():
-                prev = self.prev_idle_gray.get(sq)
-                cur  = self._sample(gray, uv)
-                if prev is not None and abs(cur - prev) > self.change_thr:
-                    self.changed_sqs.add(sq)
+        # All heavy vision work is gated on the arm-just-idled edge,
+        # so we never sample a blurred frame mid-motion.
+        if self._arm_just_idled:
+            self._arm_just_idled = False
 
-            # Update previous idle snapshot
-            self.prev_idle_gray = {
-                sq: self._sample(gray, uv)
-                for sq, uv in self.grid_centres.items()
-            }
+            # Refresh board grid with all available detectors
+            found, method = self._run_all_board_detectors(gray, img)
+            if found:
+                self._last_det_method = method
+
+            if self.empty_ref:
+                # Piece detection: diff vs empty-board reference
+                self.piece_sqs = set()
+                for sq in self.grid_centres:
+                    cur   = self._sample_perspective(gray, sq)
+                    empty = self.empty_ref.get(sq)
+                    if empty is not None and abs(cur - empty) > self.piece_thr:
+                        self.piece_sqs.add(sq)
+
+                # Change detection: diff vs previous idle snapshot
+                self.changed_sqs = set()
+                for sq in self.grid_centres:
+                    prev = self.prev_idle_gray.get(sq)
+                    cur  = self._sample_perspective(gray, sq)
+                    if prev is not None and abs(cur - prev) > self.change_thr:
+                        self.changed_sqs.add(sq)
+
+                # Store idle snapshot for next diff
+                self.prev_idle_gray = {
+                    sq: self._sample_perspective(gray, sq)
+                    for sq in self.grid_centres
+                }
+
+                # Record game history entry
+                self.board_history.append({
+                    'frame':   self._log_counter,
+                    'move':    self.last_move or '',
+                    'pieces':  set(self.piece_sqs),
+                    'changed': set(self.changed_sqs),
+                })
+
+                self.get_logger().info(
+                    f'[TRACKING] idle snap  grid={len(self.grid_centres)}  '
+                    f'pieces={len(self.piece_sqs)}  '
+                    f'changed={sorted(self.changed_sqs)}  '
+                    f'det={self._last_det_method}  '
+                    f'history={len(self.board_history)}')
 
         self._draw_board_outline(img)
         self._draw_tile_grid(img)
@@ -242,199 +400,368 @@ class ChessVisionNode(Node):
         out.data = json.dumps(sorted(self.piece_sqs))
         self.squares_pub.publish(out)
 
-        self._log_counter += 1
-        if self._log_counter % self._log_interval == 0:
-            self.get_logger().info(
-                f'[TRACKING] frame={self._log_counter}  '
-                f'grid={len(self.grid_centres)}  '
-                f'pieces={len(self.piece_sqs)}  '
-                f'changed={sorted(self.changed_sqs)}  '
-                f'arm_idle={self.arm_idle}')
-
     # ── Board detection ───────────────────────────────────────────────────────
 
-    # Method 1 — OpenCV findChessboardCorners (7×7 inner corners of 8×8 board)
-    def _detect_via_corners(self, gray) -> bool:
-        flags = (cv2.CALIB_CB_ADAPTIVE_THRESH |
-                 cv2.CALIB_CB_NORMALIZE_IMAGE  |
-                 cv2.CALIB_CB_FAST_CHECK)
-        ret, corners = cv2.findChessboardCorners(gray, (7, 7), flags=flags)
-        if not ret:
+    def _run_all_board_detectors(self, gray, img=None):
+        """Run board detectors. Returns (found: bool, method: str).
+
+        ArUco is now the sole primary detector — it uses all 16 corners of all 4
+        markers (LMEDS overdetermined homography) which gives accurate, perspective-
+        correct grid alignment without any Hough assistance.
+
+        Hough is commented out below rather than removed so it can be re-enabled
+        as a fallback if the markers are partially occluded in a real-world setup.
+        With a reliable 4-marker ArUco ring, running Hough on every frame adds CPU
+        overhead and produces confusing cyan/yellow line clutter on the debug image
+        without improving accuracy.
+        """
+        # Run ArUco — sets self.grid_centres and self.homography if successful
+        aruco_ok = self._detect_via_aruco(gray, img)
+
+        if aruco_ok:
+            return True, 'ArUco'
+
+        # ── Hough fallback (commented out — ArUco 16-pt LMEDS is the primary path) ──
+        # Re-enable if ArUco markers are ever partially occluded:
+        #
+        # hough_ok = self._detect_via_hough(gray, img)
+        # if hough_ok:
+        #     return True, 'Hough'
+        #
+        # if self._log_counter % self._log_interval == 0:
+        #     self.get_logger().info(
+        #         f'Detectors: ArUco=no  Hough={"ok" if hough_ok else "no"}')
+        # return hough_ok, 'Hough' if hough_ok else ''
+
+        if self._log_counter % self._log_interval == 0:
+            self.get_logger().info('Detectors: ArUco=no (all 4 markers needed)')
+        return False, ''
+
+    def _detect_via_aruco(self, gray, img=None) -> bool:
+        """Detect the board using 4 ArUco markers placed at the board corners.
+
+        Uses ALL 4 corners of ALL 4 markers (16 point correspondences) for
+        findHomography so the system is highly overconstrained.  With LMEDS this
+        averages out sub-pixel corner-detection errors and makes the homography
+        robust to slight marker placement imperfections.
+
+        Board-space corner positions are computed analytically from:
+          • aruco_inner_offset  (d)    — gap from board edge to inner corner (squares)
+          • marker_sq_size      (S)    — marker side length (0.060m / 0.045m = 4/3 sq)
+
+        ArUco corner ordering TL→TR→BR→BL (clockwise in image), with camera looking
+        down such that image_x ≈ board_y (file) and image_y ≈ board_x (rank):
+          c0 TL: (bx_max, by_min)   c1 TR: (bx_max, by_max)
+          c2 BR: (bx_min, by_max)   c3 BL: (bx_min, by_min)
+        Per marker the bx/by bounds are:
+          ID 0 a1: bx∈[-d-S,-d]  by∈[-d-S,-d]   → inner=c1 (TR) ✓ MARKER_INNER[0]=1
+          ID 1 h1: bx∈[-d-S,-d]  by∈[8+d,8+d+S] → inner=c0 (TL) ✓ MARKER_INNER[1]=0
+          ID 2 a8: bx∈[8+d,8+d+S] by∈[-d-S,-d]  → inner=c2 (BR) ✓ MARKER_INNER[2]=2
+          ID 3 h8: bx∈[8+d,8+d+S] by∈[8+d,8+d+S]→ inner=c3 (BL) ✓ MARKER_INNER[3]=3
+        Verified against chess_world.sdf geometry (see MARKER_SQ / _D constants).
+        """
+        corners, ids, _ = cv2.aruco.detectMarkers(gray, ARUCO_DICT, parameters=ARUCO_PARAMS)
+
+        if ids is None:
             return False
 
-        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.1)
-        corners  = cv2.cornerSubPix(gray, corners, (7, 7), (-1, -1), criteria)
-        corners  = corners.reshape(7, 7, 2)
+        id_map = {int(ids[i]): corners[i][0] for i in range(len(ids))}
 
-        # corners[row][col] = pixel of inner corner between ranks (row+1,row+2)
-        # and files (col, col+1).  Extrapolate outward to get square centres.
-        # Spacing vectors from the corner grid:
-        dr = (corners[1:] - corners[:-1]).mean(axis=(0, 1))  # rank direction
-        dc = (corners[:, 1:] - corners[:, :-1]).mean(axis=(0, 1))  # file direction
+        if img is not None:
+            cv2.aruco.drawDetectedMarkers(img, corners, ids)
 
-        # Corner [0][0] is between squares (rank1,file_a) and (rank2,file_b).
-        # Square centre at rank r, file f = corners[0][0] + (r-0.5)*dr + (f-0.5)*dc
-        # Mapping: row index 0..6 = rank 1..7 inner corners
-        origin = corners[0][0]   # inner corner at rank1/rank2, file_a/file_b
-
-        for fi, f in enumerate(FILES):
-            for ri in range(8):
-                rank = str(ri + 1)
-                # Centre of square (f, rank) relative to the corner grid
-                u = origin[0] + (ri - 0.5) * dr[0] + (fi - 0.5) * dc[0]
-                v = origin[1] + (ri - 0.5) * dr[1] + (fi - 0.5) * dc[1]
-                self.grid_centres[f + rank] = (int(round(u)), int(round(v)))
-        return True
-
-    # Method 2 — colour tile detection
-    def _detect_via_tiles(self, hsv) -> bool:
-        light = cv2.inRange(hsv, LIGHT_HSV_LO, LIGHT_HSV_HI)
-        dark  = cv2.inRange(hsv, DARK_HSV_LO,  DARK_HSV_HI)
-
-        centres = []
-        k = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-        for mask in (light, dark):
-            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,  k)
-            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k)
-            cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL,
-                                       cv2.CHAIN_APPROX_SIMPLE)
-            for c in cnts:
-                area = cv2.contourArea(c)
-                if area < 60:
-                    continue
-                bx, by, bw, bh = cv2.boundingRect(c)
-                if not (0.3 < bw / max(bh, 1) < 3.5):
-                    continue
-                M = cv2.moments(c)
-                if M['m00'] == 0:
-                    continue
-                centres.append((M['m10'] / M['m00'], M['m01'] / M['m00'], area))
-
-        if len(centres) < 6:
+        if not {0, 1, 2, 3}.issubset(id_map):
+            found = sorted(id_map.keys())
+            if self._log_counter % self._log_interval == 0:
+                self.get_logger().info(f'ArUco: found IDs {found}, need 0 1 2 3')
             return False
 
-        # Try grid fitting first
-        if self._fit_grid_to_centres(centres):
-            return True
+        # Save all 4 corners of every marker for live homography recompute
+        self._last_aruco_corners  = {mid: id_map[mid].copy() for mid in range(4)}
+        self._last_aruco_frame_hw = gray.shape[:2]
 
-        # Fallback: use bounding box of all blobs → divide into 8×8
-        return self._grid_from_bbox(centres)
+        # Build 16-point correspondence using all corners of all 4 markers
+        d = self.aruco_offset
+        S = self.marker_sq
+        bx_min = {0: -d - S, 1: -d - S, 2: 8 + d,     3: 8 + d    }
+        bx_max = {0: -d,     1: -d,     2: 8 + d + S,  3: 8 + d + S}
+        by_min = {0: -d - S, 1: 8 + d,  2: -d - S,     3: 8 + d    }
+        by_max = {0: -d,     1: 8 + d + S, 2: -d,      3: 8 + d + S}
 
-    def _fit_grid_to_centres(self, centres) -> bool:
-        """Fit an 8×8 grid to detected tile centres using median spacing."""
-        pts = np.array([(c[0], c[1]) for c in centres])
+        # Per-marker corner board-space positions (in squares × BOARD_SCALE):
+        #   c0 (TL): (bx_max, by_min)  c1 (TR): (bx_max, by_max)
+        #   c2 (BR): (bx_min, by_max)  c3 (BL): (bx_min, by_min)
+        def corner_bpt(mid, ci):
+            tbl = [(bx_max[mid], by_min[mid]),
+                   (bx_max[mid], by_max[mid]),
+                   (bx_min[mid], by_max[mid]),
+                   (bx_min[mid], by_min[mid])]
+            bx, by = tbl[ci]
+            return [bx * BOARD_SCALE, by * BOARD_SCALE]
 
-        # Estimate grid spacing from nearest-neighbour distances
-        dists = []
-        for i, p in enumerate(pts):
-            d = np.linalg.norm(pts - p, axis=1)
-            d = d[d > 1]
-            dists.append(d.min())
-        spacing = float(np.median(dists))
-        if spacing < 5:
+        src_all = []  # image-space pixels
+        dst_all = []  # board-space (virtual px)
+        for mid in range(4):
+            for ci in range(4):
+                px = id_map[mid][ci]
+                src_all.append([float(px[0]), float(px[1])])
+                dst_all.append(corner_bpt(mid, ci))
+
+        src_all = np.float32(src_all)
+        dst_all = np.float32(dst_all)
+
+        # Overdetermined system (16 pts) — LMEDS averages out small corner errors
+        H, _ = cv2.findHomography(dst_all, src_all, cv2.LMEDS)
+        if H is None:
             return False
 
-        # Snap each point to the nearest grid node
-        origin = pts.min(axis=0)
-        snapped = {}
-        for px, py in pts:
-            col = int(round((px - origin[0]) / spacing))
-            row = int(round((py - origin[1]) / spacing))
-            if 0 <= col < 8 and 0 <= row < 8:
-                sq = FILES[col] + str(8 - row)
-                snapped[sq] = (int(origin[0] + col * spacing),
-                               int(origin[1] + row * spacing))
-
-        if len(snapped) < 6:
-            return False
-
-        self.grid_centres = snapped
-        return True
-
-    def _grid_from_bbox(self, centres) -> bool:
-        """Fallback: divide bounding box of all tile blobs into an 8×8 grid."""
-        pts = np.array([(c[0], c[1]) for c in centres])
-        x1, y1 = pts.min(axis=0)
-        x2, y2 = pts.max(axis=0)
-        bw, bh = x2 - x1, y2 - y1
-        if bw < 20 or bh < 20:
-            return False
-        sq_w = bw / 8.0
-        sq_h = bh / 8.0
-        snapped = {}
-        for ri in range(8):
-            for fi, f in enumerate(FILES):
-                u = int(x1 + (fi + 0.5) * sq_w)
-                v = int(y1 + (7 - ri + 0.5) * sq_h)
-                snapped[f + str(ri + 1)] = (u, v)
-        self.get_logger().info(
-            f'Grid from bbox: ({x1:.0f},{y1:.0f})→({x2:.0f},{y2:.0f}) '
-            f'sq={sq_w:.1f}×{sq_h:.1f}px')
-        self.grid_centres = snapped
-        return True
-
-    # Method 3 — TF projection fallback
-    def _detect_via_tf(self) -> bool:
-        if self.camera_info is None:
-            return False
-        try:
-            tf = self.tf_buffer.lookup_transform(
-                'camera_link', 'base_link', rclpy.time.Time(),
-                timeout=rclpy.duration.Duration(seconds=0.05))
-        except Exception as e:
-            self.get_logger().warn(f'TF lookup failed: {e}')
-            return False
-
-        K  = self.camera_info.k
-        fx, fy, cx, cy = K[0], K[4], K[2], K[5]
-        q  = tf.transform.rotation
-        R  = self._quat_to_mat(q.x, q.y, q.z, q.w)
-        t  = tf.transform.translation
-        tx = np.array([t.x, t.y, t.z])
-
-        iw = self.camera_info.width
-        ih = self.camera_info.height
-
-        self.get_logger().info(
-            f'TF cam←base  t=({t.x:.3f},{t.y:.3f},{t.z:.3f})  '
-            f'q=({q.x:.3f},{q.y:.3f},{q.z:.3f},{q.w:.3f})  '
-            f'K fx={fx:.1f} fy={fy:.1f} cx={cx:.1f} cy={cy:.1f}  '
-            f'img={iw}x{ih}',
-            throttle_duration_sec=5.0)
-
+        # Project all 64 square centres through H, then apply pixel nudge.
+        # bx = rank direction (0→rank1, 8*BS→rank8), by = file direction (0→a-file, 8*BS→h-file)
+        iw, ih = gray.shape[1], gray.shape[0]
         centres = {}
-        behind = 0
-        out_of_frame = 0
-        for sq in ALL_SQUARES:
-            wx, wy, wz = self._sq_world(sq)
-            p = R @ np.array([wx, wy, wz]) + tx
-            if p[2] <= 0:
-                behind += 1
-                continue
-            u = int(fx * p[0] / p[2] + cx)
-            v = int(fy * p[1] / p[2] + cy)
-            if 0 <= u < iw and 0 <= v < ih:
-                centres[sq] = (u, v)
-            else:
-                out_of_frame += 1
+        for ri in range(8):
+            for fi in range(8):
+                bx = (ri + 0.5) * BOARD_SCALE   # rank index → bx (rank direction in world/H)
+                by = (fi + 0.5) * BOARD_SCALE   # file index → by (file direction in world/H)
+                pt = np.array([[[bx, by]]], dtype=np.float32)
+                px = cv2.perspectiveTransform(pt, H)[0][0]
+                u = int(round(float(px[0]))) + self.grid_dx
+                v = int(round(float(px[1]))) + self.grid_dy
+                if 0 <= u < iw and 0 <= v < ih:
+                    centres[FILES[fi] + str(ri + 1)] = (u, v)
 
-        # Log a sample of projections for the a-file to show where board lands
-        sample_log = []
-        for sq in ['a1', 'a2', 'a8', 'h1', 'h8', 'e4']:
-            wx, wy, wz = self._sq_world(sq)
-            p = R @ np.array([wx, wy, wz]) + tx
-            if p[2] > 0:
-                u = int(fx * p[0] / p[2] + cx)
-                v = int(fy * p[1] / p[2] + cy)
-                sample_log.append(f'{sq}→({u},{v})')
-            else:
-                sample_log.append(f'{sq}→behind')
         self.get_logger().info(
-            f'TF projection: in_frame={len(centres)} behind={behind} '
-            f'off_screen={out_of_frame}  samples: {" ".join(sample_log)}')
+            f'ArUco: all 4 markers detected (16-pt LMEDS H)  in_frame={len(centres)}')
 
         if len(centres) < 4:
             return False
+
+        self.grid_centres = centres
+        self.homography   = H
+        return True
+
+    def _recompute_aruco_homography(self):
+        """Recompute H and grid_centres from last saved ArUco corners + current params.
+
+        Called immediately when aruco_inner_offset, marker_sq_size, grid_dx, or grid_dy
+        change via the calibration GUI so the grid overlay updates live without waiting
+        for a new frame or arm idle.  Uses the same 16-point LMEDS computation as
+        _detect_via_aruco.  Does nothing if ArUco has never successfully detected markers.
+        """
+        if self._last_aruco_corners is None or self._last_aruco_frame_hw is None:
+            return
+
+        d = self.aruco_offset
+        S = self.marker_sq
+        bx_min = {0: -d - S, 1: -d - S, 2: 8 + d,     3: 8 + d    }
+        bx_max = {0: -d,     1: -d,     2: 8 + d + S,  3: 8 + d + S}
+        by_min = {0: -d - S, 1: 8 + d,  2: -d - S,     3: 8 + d    }
+        by_max = {0: -d,     1: 8 + d + S, 2: -d,      3: 8 + d + S}
+
+        def corner_bpt(mid, ci):
+            tbl = [(bx_max[mid], by_min[mid]),
+                   (bx_max[mid], by_max[mid]),
+                   (bx_min[mid], by_max[mid]),
+                   (bx_min[mid], by_min[mid])]
+            bx, by = tbl[ci]
+            return [bx * BOARD_SCALE, by * BOARD_SCALE]
+
+        src_all, dst_all = [], []
+        for mid in range(4):
+            for ci in range(4):
+                px = self._last_aruco_corners[mid][ci]
+                src_all.append([float(px[0]), float(px[1])])
+                dst_all.append(corner_bpt(mid, ci))
+
+        H, _ = cv2.findHomography(np.float32(dst_all), np.float32(src_all), cv2.LMEDS)
+        if H is None:
+            return
+
+        ih, iw = self._last_aruco_frame_hw
+        centres = {}
+        for ri in range(8):
+            for fi in range(8):
+                bx = (ri + 0.5) * BOARD_SCALE   # rank → bx
+                by = (fi + 0.5) * BOARD_SCALE   # file → by
+                pt = np.array([[[bx, by]]], dtype=np.float32)
+                px = cv2.perspectiveTransform(pt, H)[0][0]
+                u = int(round(float(px[0]))) + self.grid_dx
+                v = int(round(float(px[1]))) + self.grid_dy
+                if 0 <= u < iw and 0 <= v < ih:
+                    centres[FILES[fi] + str(ri + 1)] = (u, v)
+        if len(centres) >= 4:
+            self.homography   = H
+            self.grid_centres = centres
+
+    def _detect_via_hough(self, gray, img=None) -> bool:
+        """Detect the board grid from straight tile edges using Hough line transform.
+
+        Works on geometry rather than colour — robust to pieces obscuring tiles.
+        Populates self.grid_centres with up to 64 square centres if ≥4 are in frame.
+        """
+        h, w = gray.shape[:2]
+
+        edges = cv2.Canny(gray, 50, 150)
+        lines = cv2.HoughLinesP(edges, rho=1, theta=np.pi / 180, threshold=40,
+                                minLineLength=30, maxLineGap=15)
+        if lines is None:
+            return False
+
+        # ── Perspective-aware line classification via angle clustering ───────────
+        # Instead of assuming near-H / near-V, find the two dominant grid directions
+        # from the data — works for any camera angle including significant tilt.
+
+        all_segs = []
+        seg_angles  = []
+        seg_lengths = []
+        for x1, y1, x2, y2 in lines[:, 0]:
+            L = float(np.hypot(x2 - x1, y2 - y1))
+            if L < 1:
+                continue
+            a = float(np.arctan2(y2 - y1, x2 - x1)) % np.pi   # fold to [0, π)
+            all_segs.append((x1, y1, x2, y2))
+            seg_angles.append(a)
+            seg_lengths.append(L)
+
+        if len(all_segs) < 4:
+            return False
+
+        seg_angles  = np.array(seg_angles)
+        seg_lengths = np.array(seg_lengths)
+
+        # Length-weighted angle histogram (36 bins × 5°)
+        N_BINS = 36
+        hist, edges = np.histogram(seg_angles, bins=N_BINS,
+                                   range=(0, np.pi), weights=seg_lengths)
+        bin_centres = (edges[:-1] + edges[1:]) / 2
+
+        # Dominant direction A
+        p1      = int(np.argmax(hist))
+        angle_A = bin_centres[p1]
+
+        # Dominant direction B — closest bin to A+90° with ≥10% of peak weight
+        target      = (angle_A + np.pi / 2) % np.pi
+        ang_dist_to_target = np.abs(bin_centres - target)
+        ang_dist_to_target = np.minimum(ang_dist_to_target, np.pi - ang_dist_to_target)
+        candidates  = np.where(hist >= 0.10 * hist[p1])[0]
+        if len(candidates) == 0:
+            return False
+        p2      = int(candidates[np.argmin(ang_dist_to_target[candidates])])
+        angle_B = bin_centres[p2]
+
+        def _ang_dist(a, b):
+            d = abs(a - b) % np.pi
+            return min(d, np.pi - d)
+
+        # Classify each segment into group A or B (tolerance ±25.7°)
+        TOL = np.pi / 7
+        groupA, groupB = [], []
+        for seg, a in zip(all_segs, seg_angles):
+            dA = _ang_dist(a, angle_A)
+            dB = _ang_dist(a, angle_B)
+            if dA < TOL and dA <= dB:
+                groupA.append(seg)
+            elif dB < TOL and dB < dA:
+                groupB.append(seg)
+
+        # Assign H / V: group whose dominant angle is closer to 0 (horizontal) is H
+        h_segs = groupA if _ang_dist(angle_A, 0) <= _ang_dist(angle_B, 0) else groupB
+        v_segs = groupB if h_segs is groupA else groupA
+        h_angle = angle_A if h_segs is groupA else angle_B
+        v_angle = angle_B if h_segs is groupA else angle_A
+
+        def cluster_by_perp(segs, dominant_angle):
+            """Cluster segments by their midpoint projected onto the perpendicular axis.
+            Works for any line direction — handles perspective-converging lines."""
+            if not segs:
+                return []
+            perp = dominant_angle + np.pi / 2
+            nx, ny = np.cos(perp), np.sin(perp)
+            positions = sorted(
+                (s[0] + s[2]) / 2 * nx + (s[1] + s[3]) / 2 * ny
+                for s in segs
+            )
+            clusters, group = [], [positions[0]]
+            for pos in positions[1:]:
+                if pos - group[-1] <= 15:
+                    group.append(pos)
+                else:
+                    clusters.append(float(np.median(group)))
+                    group = [pos]
+            clusters.append(float(np.median(group)))
+            return clusters
+
+        h_clusters = cluster_by_perp(h_segs, h_angle)
+        v_clusters = cluster_by_perp(v_segs, v_angle)
+
+        n_h, n_v = len(h_clusters), len(v_clusters)
+        if n_h < 2 or n_v < 2:
+            if self._log_counter % self._log_interval == 0:
+                self.get_logger().info(
+                    f'Hough: H={n_h} V={n_v} (angles A={np.degrees(angle_A):.0f}° '
+                    f'B={np.degrees(angle_B):.0f}°) — not enough clusters')
+            return False
+
+        # Debug: draw detected lines
+        if img is not None:
+            for x1, y1, x2, y2 in h_segs:
+                cv2.line(img, (x1, y1), (x2, y2), (255, 255, 0), 1)   # cyan
+            for x1, y1, x2, y2 in v_segs:
+                cv2.line(img, (x1, y1), (x2, y2), (0, 255, 255), 1)   # yellow
+
+        # Compute pairwise intersections
+        intersections = [(int(vx), int(hy))
+                         for hy in h_clusters for vx in v_clusters]
+        if img is not None:
+            for pt in intersections:
+                cv2.circle(img, pt, 4, (255, 255, 255), -1)
+
+        # Estimate grid step from cluster spacing
+        def median_step(positions):
+            s = sorted(positions)
+            diffs = [s[i + 1] - s[i] for i in range(len(s) - 1)]
+            return float(np.median(diffs)) if diffs else 0.0
+
+        step_h = median_step(h_clusters)
+        step_v = median_step(v_clusters)
+        if step_h <= 0 or step_v <= 0:
+            return False
+
+        # Extrapolate to cover all 9 grid lines (8 squares + 1)
+        def extrapolate_to_9(positions, step):
+            s = sorted(positions)
+            while len(s) < 9:
+                # Extend whichever end needs more lines
+                if 9 - len(s) > 0:
+                    s.insert(0, s[0] - step)
+                if len(s) < 9:
+                    s.append(s[-1] + step)
+            return s[:9]
+
+        h9 = extrapolate_to_9(h_clusters, step_h)  # 9 horizontal y-positions
+        v9 = extrapolate_to_9(v_clusters, step_v)  # 9 vertical   x-positions
+
+        # Derive 8×8 square centres as midpoints of 2×2 corner quads
+        # Image y increases downward → h9[0] is top of image → rank 8
+        centres = {}
+        for ri in range(8):
+            rank = 8 - ri          # top row → rank 8
+            for fi in range(8):
+                sq_name = FILES[fi] + str(rank)
+                cu = (v9[fi] + v9[fi + 1]) / 2
+                cv_coord = (h9[ri] + h9[ri + 1]) / 2
+                u, v = int(round(cu)), int(round(cv_coord))
+                if 0 <= u < w and 0 <= v < h:
+                    centres[sq_name] = (u, v)
+
+        n_int = len(intersections)
+        n_in  = len(centres)
+        self.get_logger().info(
+            f'Hough: H={n_h} V={n_v} intersections={n_int} in_frame={n_in}')
+
+        if n_in < 4:
+            return False
+
         self.grid_centres = centres
         return True
 
@@ -442,8 +769,19 @@ class ChessVisionNode(Node):
 
     def _accumulate_ref(self, gray, img):
         """Collect frames into empty-board reference average."""
-        for sq, uv in self.grid_centres.items():
-            self._ref_acc.setdefault(sq, []).append(self._sample(gray, uv))
+        if self._ref_delay > 0:
+            self._ref_delay -= 1
+            h, w = img.shape[:2]
+            cv2.putText(img, f'Settling... {self._ref_delay} frames',
+                        (8, img.shape[0] - 14), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.55, (0, 0, 0),       4)
+            cv2.putText(img, f'Settling... {self._ref_delay} frames',
+                        (8, img.shape[0] - 14), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.55, (100, 200, 255), 1)
+            return
+
+        for sq in self.grid_centres:
+            self._ref_acc.setdefault(sq, []).append(self._sample_perspective(gray, sq))
         self._ref_count += 1
 
         # Progress bar
@@ -458,15 +796,93 @@ class ChessVisionNode(Node):
                     (255, 255, 255), 1)
 
         if self._ref_count >= self.REF_FRAMES_NEEDED:
-            self.empty_ref = {sq: float(np.mean(v))
-                              for sq, v in self._ref_acc.items()}
+            self.empty_ref      = {sq: float(np.mean(v))
+                                   for sq, v in self._ref_acc.items()}
             self.prev_idle_gray = dict(self.empty_ref)
-            self.piece_sqs   = set()
-            self.changed_sqs = set()
-            self.state = self.TRACKING
+            self.piece_sqs      = set()
+            self.changed_sqs    = set()
+            self.board_history  = []
+            if self._recal_mode:
+                # Mid-game recal: pieces will be returned to board, go straight to TRACKING
+                self._recal_mode = False
+                self.state = self.TRACKING
+                self.get_logger().info(
+                    f'Empty board reference captured ({len(self.empty_ref)} squares) '
+                    f'— returning to TRACKING (mid-game recal)')
+            else:
+                # Initial setup: wait for all 32 pieces to be placed
+                self.state = self.WAIT_PIECES
+                self.get_logger().info(
+                    f'Empty board reference captured ({len(self.empty_ref)} squares) '
+                    f'— waiting for 32 pieces to be placed (WAIT_PIECES)')
+
+    def _run_wait_pieces(self, img, gray):
+        """Wait until all 32 starting squares are occupied.
+
+        Samples every frame (arm should be idle here — human placing pieces).
+        Once all STARTING_SQUARES show brightness diff > piece_thr vs empty_ref,
+        take a prev_idle_gray snapshot and enter TRACKING.
+        """
+        self._draw_board_outline(img)
+        self._draw_tile_grid(img)
+
+        # Compute which starting squares currently look occupied
+        occupied = set()
+        missing  = set()
+        for sq in STARTING_SQUARES:
+            if self.grid_centres.get(sq) is None:
+                missing.add(sq)
+                continue
+            cur   = self._sample_perspective(gray, sq)
+            empty = self.empty_ref.get(sq)
+            if empty is not None and abs(cur - empty) > self.piece_thr:
+                occupied.add(sq)
+            else:
+                missing.add(sq)
+
+        h, w = img.shape[:2]
+        r = self.sample_r + 10
+
+        # Draw occupied starting squares in green, missing in red
+        for sq in STARTING_SQUARES:
+            uv = self.grid_centres.get(sq)
+            if uv is None:
+                continue
+            u, v = uv
+            if not (0 <= u < w and 0 <= v < h):
+                continue
+            if sq in occupied:
+                cv2.circle(img, (u, v), r, (0, 0, 0),    4)
+                cv2.circle(img, (u, v), r, (0, 220, 60), 2)   # green — piece present
+            else:
+                cv2.circle(img, (u, v), r, (0, 0, 0),    4)
+                cv2.circle(img, (u, v), r, (0, 60, 220), 2)   # red — piece missing
+
+        # Progress bar
+        n = len(occupied)
+        pct   = n / 32
+        bar_w = int(w * pct)
+        cv2.rectangle(img, (0, h - 8), (w, h),       (0, 0, 0),    -1)
+        cv2.rectangle(img, (0, h - 8), (bar_w, h),   (0, 180, 60), -1)
+        cv2.putText(img, f'Place all pieces  {n}/32 detected',
+                    (8, h - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
+        self._log_counter += 1
+        if self._log_counter % self._log_interval == 0:
             self.get_logger().info(
-                f'Empty board reference captured ({len(self.empty_ref)} squares) '
-                f'— entering TRACKING')
+                f'[WAIT_PIECES] {n}/32 occupied  missing={sorted(missing)[:8]}...')
+
+        if n >= 32:
+            # All pieces on board — snapshot prev_idle and start tracking
+            self.prev_idle_gray = {
+                sq: self._sample_perspective(gray, sq)
+                for sq in self.grid_centres
+            }
+            self.piece_sqs   = set(occupied)
+            self.changed_sqs = set()
+            self.board_history = []
+            self.state = self.TRACKING
+            self.get_logger().info('All 32 pieces detected — entering TRACKING')
 
     def _sample(self, gray, uv) -> float:
         u, v = uv
@@ -475,46 +891,95 @@ class ChessVisionNode(Node):
         patch = gray[max(0, v - r):min(h, v + r), max(0, u - r):min(w, u + r)]
         return float(np.mean(patch)) if patch.size > 0 else 0.0
 
+    def _sample_perspective(self, gray, sq) -> float:
+        """Sample a tile by warping its perspective quadrilateral to a canonical square.
+
+        When the ArUco homography is available the tile's four projected corners
+        define the source quad, which is warped to a 32×32 px square — exact
+        regardless of camera angle.  The inner 60% is averaged to exclude tile-edge
+        shadows and piece-base bleed into adjacent tiles.
+
+        Falls back to square-patch _sample() when no homography is set.
+        """
+        fi = FILES.index(sq[0])
+        ri = int(sq[1]) - 1          # rank 1 → index 0
+
+        if self.homography is None:
+            uv = self.grid_centres.get(sq)
+            return self._sample(gray, uv) if uv else 0.0
+
+        H             = self.homography
+        SZ            = 32
+        h_img, w_img  = gray.shape[:2]
+
+        # Project the 4 corners of this tile through H, apply pixel nudge
+        src = []
+        for dfi, dri in [(0, 0), (1, 0), (1, 1), (0, 1)]:
+            bx = (ri + dri) * BOARD_SCALE   # rank → bx
+            by = (fi + dfi) * BOARD_SCALE   # file → by
+            pt = np.array([[[bx, by]]], dtype=np.float32)
+            px = cv2.perspectiveTransform(pt, H)[0][0]
+            src.append([float(px[0]) + self.grid_dx,
+                        float(px[1]) + self.grid_dy])
+        src = np.float32(src)
+
+        # Bail if tile is entirely outside the frame
+        if (np.all(src[:, 0] < 0) or np.all(src[:, 0] > w_img) or
+                np.all(src[:, 1] < 0) or np.all(src[:, 1] > h_img)):
+            uv = self.grid_centres.get(sq)
+            return self._sample(gray, uv) if uv else 0.0
+
+        dst = np.float32([[0, 0], [SZ, 0], [SZ, SZ], [0, SZ]])
+        M   = cv2.getPerspectiveTransform(src, dst)
+        warped = cv2.warpPerspective(gray, M, (SZ, SZ))
+
+        # Inner 60% — avoids tile-edge shadows and piece-base overlap
+        margin = int(SZ * 0.2)
+        inner  = warped[margin:SZ - margin, margin:SZ - margin]
+        return float(np.mean(inner)) if inner.size > 0 else 0.0
+
     # ── Debug drawing layers ───────────────────────────────────────────────────
+
+    def _draw_diff_overlay(self, img, gray):
+        """Per-square brightness diff vs empty_ref shown as colour-coded numbers.
+
+        Color scale (relative to piece_thr):
+          diff < 0.5×thr  → dark gray   (clearly empty)
+          0.5–1.0×thr     → yellow      (borderline — threshold may need adjusting)
+          > 1.0×thr       → green       (clearly occupied)
+
+        Always visible in WAIT_PIECES. In TRACKING requires debug_diff=True.
+        """
+        if not self.empty_ref:
+            return
+        h, w = img.shape[:2]
+        thr = self.piece_thr
+        for sq, uv in self.grid_centres.items():
+            u, v = uv
+            if not (0 <= u < w and 0 <= v < h):
+                continue
+            cur  = self._sample_perspective(gray, sq)
+            ref  = self.empty_ref.get(sq)
+            if ref is None:
+                continue
+            diff = abs(cur - ref)
+            if diff < 0.5 * thr:
+                color = (90, 90, 90)      # gray — empty
+            elif diff < thr:
+                color = (0, 200, 220)     # yellow — borderline
+            else:
+                color = (60, 220, 60)     # green — occupied
+            cv2.putText(img, f'{diff:.0f}', (u - 10, v + 4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 0, 0), 3)
+            cv2.putText(img, f'{diff:.0f}', (u - 10, v + 4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, color,     1)
 
     def _overlay_edges(self, img, gray):
         """Tinted Canny edge overlay — shows board/tile boundaries."""
         edges = cv2.Canny(gray, 40, 120)
         edge_layer = np.zeros_like(img)
-        edge_layer[edges > 0] = (180, 60, 0)   # dim blue-ish tint
-        cv2.addWeighted(img, 1.0, edge_layer, 0.35, 0, img)
-
-    def _draw_tile_candidates(self, img, hsv):
-        """During SEARCHING: highlight light and dark tile colour candidates."""
-        light = cv2.inRange(hsv, LIGHT_HSV_LO, LIGHT_HSV_HI)
-        dark  = cv2.inRange(hsv, DARK_HSV_LO,  DARK_HSV_HI)
-        k = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-
-        light_count = 0
-        dark_count  = 0
-        for mask, color, label in (
-                (light, (100, 220, 255), 'light'),   # BGR orange-yellow
-                (dark,  (60,  60,  200), 'dark')):   # BGR red
-            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, k)
-            cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL,
-                                       cv2.CHAIN_APPROX_SIMPLE)
-            for c in cnts:
-                if cv2.contourArea(c) < 80:
-                    continue
-                # Black thick shadow then coloured outline
-                cv2.drawContours(img, [c], -1, (0, 0, 0), 6)
-                cv2.drawContours(img, [c], -1, color,      3)
-                if label == 'light':
-                    light_count += 1
-                else:
-                    dark_count += 1
-
-        h, w = img.shape[:2]
-        info = f'SEARCHING  light={light_count}  dark={dark_count}  (need >=20 total)'
-        cv2.putText(img, info, (8, h - 14), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.55, (0,   0,   0), 4)
-        cv2.putText(img, info, (8, h - 14), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.55, (200, 200, 200), 1)
+        edge_layer[edges > 0] = (0, 160, 0)    # green — doesn't contaminate markers
+        cv2.addWeighted(img, 1.0, edge_layer, 0.5, 0, img)
 
     def _draw_board_outline(self, img):
         """Draw a bounding rectangle around all in-frame grid centres."""
@@ -539,32 +1004,103 @@ class ChessVisionNode(Node):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0),   2)
 
     def _draw_tile_grid(self, img):
-        """Draw grid lines connecting adjacent square centres."""
+        """Draw actual tile boundary lines on the debug image.
+
+        When the ArUco homography is available: projects the full 9×9 corner grid
+        through H so lines fall on real tile edges (not centre-to-centre).
+        Falls back to centre-to-centre lines when only Hough grid is available.
+        File labels (a–h) and rank labels (1–8) drawn at the board edges.
+        """
         h, w = img.shape[:2]
 
         def in_frame(u, v):
             return 0 <= u < w and 0 <= v < h
 
-        for ri in range(8):
+        if self.homography is not None:
+            # ── Homography path: project 9×9 corners → draw tile edges ──────────
+            H = self.homography
+            corners = {}
+            for ri in range(9):
+                for fi in range(9):
+                    bx = ri * BOARD_SCALE   # rank → bx
+                    by = fi * BOARD_SCALE   # file → by
+                    pt = np.array([[[bx, by]]], dtype=np.float32)
+                    px = cv2.perspectiveTransform(pt, H)[0][0]
+                    u = int(round(float(px[0]))) + self.grid_dx
+                    v = int(round(float(px[1]))) + self.grid_dy
+                    corners[(fi, ri)] = (u, v)
+
+            # Semi-transparent checkerboard overlay — makes misalignment immediately
+            # visible: if a shaded quad covers the wrong physical tile colour, the
+            # aruco_inner_offset / grid_dx / grid_dy params need adjustment.
+            overlay = img.copy()
+            for ri in range(8):
+                for fi in range(8):
+                    quad = np.array([
+                        corners[(fi,     ri)],
+                        corners[(fi + 1, ri)],
+                        corners[(fi + 1, ri + 1)],
+                        corners[(fi,     ri + 1)],
+                    ], dtype=np.int32)
+                    color = (210, 210, 210) if (fi + ri) % 2 == 0 else (45, 45, 45)
+                    cv2.fillPoly(overlay, [quad], color)
+            cv2.addWeighted(overlay, 0.18, img, 0.82, 0, img)
+
+            # Horizontal tile edges (constant ri)
+            for ri in range(9):
+                for fi in range(8):
+                    p1, p2 = corners[(fi, ri)], corners[(fi + 1, ri)]
+                    if in_frame(*p1) or in_frame(*p2):
+                        cv2.line(img, p1, p2, (0,   0,   0), 3)
+                        cv2.line(img, p1, p2, (0, 160,  60), 1)
+
+            # Vertical tile edges (constant fi)
+            for fi in range(9):
+                for ri in range(8):
+                    p1, p2 = corners[(fi, ri)], corners[(fi, ri + 1)]
+                    if in_frame(*p1) or in_frame(*p2):
+                        cv2.line(img, p1, p2, (0,   0,   0), 3)
+                        cv2.line(img, p1, p2, (0, 160,  60), 1)
+
+            # File labels (a–h) along bottom edge
             for fi in range(8):
-                sq  = FILES[fi] + str(ri + 1)
-                uv  = self.grid_centres.get(sq)
-                if not uv or not in_frame(*uv):
-                    continue
-                # Draw line to right neighbour
-                if fi < 7:
-                    sq2 = FILES[fi + 1] + str(ri + 1)
-                    uv2 = self.grid_centres.get(sq2)
-                    if uv2 and in_frame(*uv2):
-                        cv2.line(img, uv, uv2, (0, 0, 0),   3)
-                        cv2.line(img, uv, uv2, (80, 80, 80), 1)
-                # Draw line to upper neighbour
-                if ri < 7:
-                    sq2 = FILES[fi] + str(ri + 2)
-                    uv2 = self.grid_centres.get(sq2)
-                    if uv2 and in_frame(*uv2):
-                        cv2.line(img, uv, uv2, (0, 0, 0),   3)
-                        cv2.line(img, uv, uv2, (80, 80, 80), 1)
+                p = corners[(fi, 8)]
+                if in_frame(*p):
+                    cv2.putText(img, FILES[fi], (p[0] - 4, min(h - 4, p[1] + 14)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0,   0,   0), 3)
+                    cv2.putText(img, FILES[fi], (p[0] - 4, min(h - 4, p[1] + 14)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 200,  80), 1)
+
+            # Rank labels (1–8) along left edge (bx=0 = rank-1 side, ri increases → rank increases)
+            for ri in range(8):
+                p = corners[(0, ri)]
+                rank = ri + 1
+                if in_frame(*p):
+                    cv2.putText(img, str(rank), (max(0, p[0] - 14), p[1] + 4),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0,   0,   0), 3)
+                    cv2.putText(img, str(rank), (max(0, p[0] - 14), p[1] + 4),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 200,  80), 1)
+
+        else:
+            # ── Fallback: centre-to-centre lines when only Hough grid available ──
+            for ri in range(8):
+                for fi in range(8):
+                    sq  = FILES[fi] + str(ri + 1)
+                    uv  = self.grid_centres.get(sq)
+                    if not uv or not in_frame(*uv):
+                        continue
+                    if fi < 7:
+                        sq2 = FILES[fi + 1] + str(ri + 1)
+                        uv2 = self.grid_centres.get(sq2)
+                        if uv2 and in_frame(*uv2):
+                            cv2.line(img, uv, uv2, (0,   0,   0), 3)
+                            cv2.line(img, uv, uv2, (80, 80,  80), 1)
+                    if ri < 7:
+                        sq2 = FILES[fi] + str(ri + 2)
+                        uv2 = self.grid_centres.get(sq2)
+                        if uv2 and in_frame(*uv2):
+                            cv2.line(img, uv, uv2, (0,   0,   0), 3)
+                            cv2.line(img, uv, uv2, (80, 80,  80), 1)
 
     def _draw_square_markers(self, img):
         """Draw per-square indicators: pieces, changed squares, empty squares."""
@@ -611,6 +1147,7 @@ class ChessVisionNode(Node):
             self.SEARCHING:     (0,  80, 255),   # red-orange
             self.WAIT_EMPTY:    (0, 200, 255),   # yellow
             self.CAPTURING_REF: (200, 200, 0),   # cyan
+            self.WAIT_PIECES:   (60, 200, 255),  # orange — waiting for pieces
             self.TRACKING:      (0, 220,   0),   # green
         }.get(self.state, (200, 200, 200))
 
@@ -618,45 +1155,49 @@ class ChessVisionNode(Node):
 
         extra = ''
         if self.state == self.TRACKING:
-            extra = f'  pieces={len(self.piece_sqs)}  changed={len(self.changed_sqs)}'
+            extra = (f'  pieces={len(self.piece_sqs)}  changed={len(self.changed_sqs)}'
+                     f'  snap={len(self.board_history)}')
         elif self.state == self.CAPTURING_REF:
             extra = f'  {self._ref_count}/{self.REF_FRAMES_NEEDED} frames'
+        elif self.state == self.WAIT_PIECES:
+            n = sum(1 for sq in STARTING_SQUARES if sq in self.piece_sqs)
+            extra = f'  {len(self.piece_sqs)}/32 pieces'
 
-        label = f'{self.state}   grid={len(self.grid_centres)}{extra}'
+        det = f'  det={self._last_det_method}' if self._last_det_method else ''
+        arm = '  ARM:IDLE' if self.arm_idle else '  ARM:MOVING'
+        thr = ''
+        if self.state in (self.WAIT_PIECES, self.TRACKING):
+            thr = f'  thr={self.piece_thr:.0f}/{self.change_thr:.0f}'
+        label = f'{self.state}   grid={len(self.grid_centres)}{extra}{det}{thr}{arm}'
         cv2.putText(img, label, (8, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 0),   6)
         cv2.putText(img, label, (8, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.75, state_color, 2)
 
         # Centre instruction overlay
         cx, cy = w // 2, h // 2
         if self.state == self.SEARCHING:
-            cv2.putText(img, 'BOARD NOT FOUND', (cx - 160, cy),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0,  0, 0), 8)
-            cv2.putText(img, 'BOARD NOT FOUND', (cx - 160, cy),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 80, 255), 3)
+            if not self.arm_idle:
+                label2 = 'WAITING FOR ARM IDLE'
+                cv2.putText(img, label2, (cx - 190, cy),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.1, (0,   0,   0),   8)
+                cv2.putText(img, label2, (cx - 190, cy),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.1, (100, 100, 255), 3)
+            else:
+                cv2.putText(img, 'BOARD NOT FOUND', (cx - 160, cy),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0,  0, 0), 8)
+                cv2.putText(img, 'BOARD NOT FOUND', (cx - 160, cy),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 80, 255), 3)
         elif self.state == self.WAIT_EMPTY:
-            msg = 'Click  Remove Pieces  then wait'
+            msg = 'Board locked — click  Calibrate Camera  then wait'
             cv2.putText(img, msg, (cx - 200, cy),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0,   0,   0), 6)
             cv2.putText(img, msg, (cx - 200, cy),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 200, 255), 2)
-
-    # ── Helpers ───────────────────────────────────────────────────────────────
-
-    def _sq_world(self, sq):
-        fi = FILES.index(sq[0])
-        ri = int(sq[1]) - 1
-        return (self.ox + ri * self.sq + self.sq / 2,
-                self.oy + fi * self.sq + self.sq / 2,
-                self.oz + 0.035)
-
-    @staticmethod
-    def _quat_to_mat(x, y, z, w):
-        return np.array([
-            [1-2*(y*y+z*z),   2*(x*y-w*z),   2*(x*z+w*y)],
-            [  2*(x*y+w*z), 1-2*(x*x+z*z),   2*(y*z-w*x)],
-            [  2*(x*z-w*y),   2*(y*z+w*x), 1-2*(x*x+y*y)],
-        ], dtype=float)
-
+        elif self.state == self.WAIT_PIECES:
+            msg = 'Place all 32 pieces on starting squares'
+            cv2.putText(img, msg, (cx - 220, cy),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0,   0,   0), 6)
+            cv2.putText(img, msg, (cx - 220, cy),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (60, 200, 255), 2)
 
 def main(args=None):
     rclpy.init(args=args)

@@ -113,16 +113,32 @@ class ChessGUI(Node):
                   font=('Courier', 9), bd=0, padx=8,
                   cursor='hand2').pack(side='left')
 
-        # Control buttons
-        ctrl_frame = tk.Frame(self.root, bg='#1a1a2e')
-        ctrl_frame.pack(pady=4)
-        tk.Button(ctrl_frame, text='Reset Game',
+        # Game control row
+        game_frame = tk.Frame(self.root, bg='#1a1a2e')
+        game_frame.pack(pady=(4, 1))
+        tk.Label(game_frame, text='Game:', bg='#1a1a2e', fg='#8b949e',
+                 font=('Courier', 8)).pack(side='left', padx=(0, 4))
+        tk.Button(game_frame, text='Reset Game',
                   command=self._reset_game,
                   bg='#5a1a1a', fg='white', font=('Courier', 9),
                   bd=0, padx=10, pady=4, cursor='hand2').pack(side='left', padx=4)
-        tk.Button(ctrl_frame, text='Remove Pieces',
+        tk.Button(game_frame, text='Return Pieces',
+                  command=self._return_pieces,
+                  bg='#2a2a6a', fg='white', font=('Courier', 9),
+                  bd=0, padx=10, pady=4, cursor='hand2').pack(side='left', padx=4)
+
+        # Vision calibration row
+        calib_frame = tk.Frame(self.root, bg='#1a1a2e')
+        calib_frame.pack(pady=(1, 4))
+        tk.Label(calib_frame, text='Vision:', bg='#1a1a2e', fg='#8b949e',
+                 font=('Courier', 8)).pack(side='left', padx=(0, 4))
+        tk.Button(calib_frame, text='Calibrate Camera',
                   command=self._remove_pieces,
                   bg='#1a4a2a', fg='white', font=('Courier', 9),
+                  bd=0, padx=10, pady=4, cursor='hand2').pack(side='left', padx=4)
+        tk.Button(calib_frame, text='Recalibrate',
+                  command=self._recalibrate,
+                  bg='#3a3a1a', fg='white', font=('Courier', 9),
                   bd=0, padx=10, pady=4, cursor='hand2').pack(side='left', padx=4)
 
         # Last moves log
@@ -224,11 +240,23 @@ class ChessGUI(Node):
         self._log('--- Game reset ---')
         self.root.after(0, self._draw_board)
 
+    def _return_pieces(self):
+        msg = String()
+        msg.data = 'RETURN_PIECES'
+        self.cmd_pub.publish(msg)
+        self._log('Returning pieces to current board positions...')
+
     def _remove_pieces(self):
         msg = String()
         msg.data = 'REMOVE_PIECES'
         self.cmd_pub.publish(msg)
-        self._log('Removing pieces for vision calibration...')
+        self._log('Removing pieces for camera calibration...')
+
+    def _recalibrate(self):
+        msg = String()
+        msg.data = 'RECAL'
+        self.cmd_pub.publish(msg)
+        self._log('Recalibrating empty board reference...')
 
     def _log(self, text: str):
         self.log_text.config(state='normal')

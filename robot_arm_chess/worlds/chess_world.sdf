@@ -76,7 +76,7 @@
         <!-- Board base (brown surround) -->
         <visual name="board_base">
           <pose>0.0225 0.0225 0 0 0 0</pose>
-          <geometry><box><size>0.375 0.375 0.02</size></box></geometry>
+          <geometry><box><size>0.56 0.56 0.02</size></box></geometry>
           <material>
             <ambient>0.4 0.25 0.1 1</ambient>
             <diffuse>0.4 0.25 0.1 1</diffuse>
@@ -204,6 +204,81 @@
     <model name="bp_bf8"><pose>0.2225 -0.0625 0.038 0 0 0</pose><link name="l"><inertial><mass>0.02</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.015</radius><length>0.035</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.015</radius><length>0.035</length></cylinder></geometry><material><ambient>0.15 0.12 0.1 1</ambient><diffuse>0.15 0.12 0.1 1</diffuse></material></visual></link></model>
     <model name="bp_ng8"><pose>0.2225 -0.1075 0.038 0 0 0</pose><link name="l"><inertial><mass>0.02</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.015</radius><length>0.035</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.015</radius><length>0.035</length></cylinder></geometry><material><ambient>0.15 0.12 0.1 1</ambient><diffuse>0.15 0.12 0.1 1</diffuse></material></visual></link></model>
     <model name="bp_rh8"><pose>0.2225 -0.1525 0.038 0 0 0</pose><link name="l"><inertial><mass>0.02</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.015</radius><length>0.035</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.015</radius><length>0.035</length></cylinder></geometry><material><ambient>0.15 0.12 0.1 1</ambient><diffuse>0.15 0.12 0.1 1</diffuse></material></visual></link></model>
+
+    <!--
+      ArUco board-reference markers  (DICT_4X4_50, IDs 0-3)
+      30 mm × 30 mm flat tiles, z = 0.0215 (flush with board square tops)
+      Inner corner of each marker aligns with the board playing-area corner:
+        ID 0 → a1  (rank-1 / a-file corner)
+        ID 1 → h1  (rank-1 / h-file corner)
+        ID 2 → a8  (rank-8 / a-file corner)
+        ID 3 → h8  (rank-8 / h-file corner)
+      Texture path: robot_arm_chess/materials/textures/aruco_N.png
+    -->
+
+    <model name="aruco_0">
+      <static>true</static>
+      <pose>0.1555 -0.2195 0.0215 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.060 0.060 0.001</size></box></geometry>
+          <material>
+            <diffuse>1 1 1 1</diffuse>
+            <pbr><metal>
+              <albedo_map>file:///home/mario/Desktop/Arm/robot_arm_chess/materials/textures/aruco_0.png</albedo_map>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="aruco_1">
+      <static>true</static>
+      <pose>0.1555 0.2295 0.0215 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.060 0.060 0.001</size></box></geometry>
+          <material>
+            <diffuse>1 1 1 1</diffuse>
+            <pbr><metal>
+              <albedo_map>file:///home/mario/Desktop/Arm/robot_arm_chess/materials/textures/aruco_1.png</albedo_map>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="aruco_2">
+      <static>true</static>
+      <pose>0.6045 -0.2195 0.0215 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.060 0.060 0.001</size></box></geometry>
+          <material>
+            <diffuse>1 1 1 1</diffuse>
+            <pbr><metal>
+              <albedo_map>file:///home/mario/Desktop/Arm/robot_arm_chess/materials/textures/aruco_2.png</albedo_map>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="aruco_3">
+      <static>true</static>
+      <pose>0.6045 0.2295 0.0215 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.060 0.060 0.001</size></box></geometry>
+          <material>
+            <diffuse>1 1 1 1</diffuse>
+            <pbr><metal>
+              <albedo_map>file:///home/mario/Desktop/Arm/robot_arm_chess/materials/textures/aruco_3.png</albedo_map>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
 
     <!-- BLACK PAWNS rank 7 -->
     <model name="bp_pa7"><pose>0.2675  0.1625 0.035 0 0 0</pose><link name="l"><inertial><mass>0.015</mass><inertia><ixx>0.000001</ixx><iyy>0.000001</iyy><izz>0.000001</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial><collision name="c"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry></collision><visual name="v"><geometry><cylinder><radius>0.012</radius><length>0.028</length></cylinder></geometry><material><ambient>0.15 0.12 0.1 1</ambient><diffuse>0.15 0.12 0.1 1</diffuse></material></visual></link></model>
