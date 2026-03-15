@@ -61,12 +61,17 @@ BOARD_SLIDERS = [
 ]
 
 MOVEMENT_SLIDERS = [
-    ('grasp_height',   'Grasp height  (m)',    0.0,  0.15, 0.002,  0.04,  'float', ARM_NODE),
-    ('hover_height',   'Hover height  (m)',    0.05, 0.35, 0.005,  0.12,  'float', ARM_NODE),
-    ('lift_height',    'Lift height  (m)',     0.05, 0.45, 0.005,  0.20,  'float', ARM_NODE),
-    ('gripper_open',   'Gripper open  (rad)',  -1.3, 0.0,  0.01,   0.0,   'float', ARM_NODE),
-    ('gripper_closed', 'Gripper closed  (rad)',-1.3, 0.0,  0.01,  -1.05, 'float', ARM_NODE),
-    ('move_duration',  'Move duration  (s)',    0.5, 6.0,  0.1,    2.5,   'float', ARM_NODE),
+    ('pawn_grasp_height',  'Pawn grasp height  (m)',      0.0,  0.15, 0.002,  0.04,  'float', ARM_NODE),
+    ('piece_grasp_height', 'Piece grasp height  (m)',     0.0,  0.15, 0.002,  0.04,  'float', ARM_NODE),
+    ('place_grasp_height', 'Place grasp height  (m)',     0.0,  0.15, 0.002,  0.04,  'float', ARM_NODE),
+    ('grasp_x_offset',     'Grasp X offset  (m)',        -0.05, 0.05, 0.001,  0.0,   'float', ARM_NODE),
+    ('grasp_y_offset',     'Grasp Y offset  (m)',        -0.05, 0.05, 0.001,  0.0,   'float', ARM_NODE),
+    ('grasp_height',       'Grasp height  (m, legacy)',   0.0,  0.15, 0.002,  0.04,  'float', ARM_NODE),
+    ('hover_height',       'Hover height  (m)',           0.05, 0.35, 0.005,  0.12,  'float', ARM_NODE),
+    ('lift_height',        'Lift height  (m)',            0.05, 0.45, 0.005,  0.20,  'float', ARM_NODE),
+    ('gripper_open',       'Gripper open  (rad)',         -1.3, 0.0,  0.01,   0.0,   'float', ARM_NODE),
+    ('gripper_closed',     'Gripper closed  (rad)',       -1.3, 0.0,  0.01,  -1.05,  'float', ARM_NODE),
+    ('move_duration',      'Move duration  (s)',           0.5, 6.0,  0.1,    2.5,   'float', ARM_NODE),
 ]
 
 STANDBY_SLIDERS = [
@@ -195,8 +200,11 @@ class ArmTunerGUI(Node):
 
     def _populate_movement(self):
         f = self._tab_movement
+        self._section(f, 'Grasp tuning (per piece type & XY offset)')
+        for cfg in MOVEMENT_SLIDERS[:4]:
+            self._add_slider(f, cfg)
         self._section(f, 'Heights & gripper')
-        for cfg in MOVEMENT_SLIDERS:
+        for cfg in MOVEMENT_SLIDERS[4:]:
             self._add_slider(f, cfg)
         self._reset_btn(f, MOVEMENT_SLIDERS)
 

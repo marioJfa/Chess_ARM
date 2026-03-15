@@ -72,9 +72,18 @@ class ChessEngineNode(Node):
             String, '/chess/board_state', self.board_state_cb, 10)
         self.status_sub = self.create_subscription(
             String, '/chess/game_status', self.status_cb, 10)
+        self.cmd_sub = self.create_subscription(
+            String, '/chess/cmd', self.cmd_cb, 10)
+
+    def cmd_cb(self, msg: String):
+        if msg.data.strip() == 'RESET':
+            self.board = chess.Board()
+            self.game_active = True
+            self.calculating = False
+            self.get_logger().info('Engine reset — game_active=True, ready for new game')
 
     def status_cb(self, msg: String):
-        if msg.data != 'ONGOING' and msg.data != 'CHECK':
+        if msg.data not in ('ONGOING', 'CHECK'):
             self.game_active = False
             self.get_logger().info(f'Game over: {msg.data}')
 
@@ -106,14 +115,7 @@ class ChessEngineNode(Node):
                 chess.engine.Limit(depth=self.depth, time=self.move_time)
             )
             move = result.move
-            score_info = self.engine.analyse(
-                self.board,
-                chess.engine.Limit(depth=self.depth)
-            )
-            score = score_info.get('score', None)
-
-            self.get_logger().info(
-                f'Best move: {move.uci()}  score: {score}')
+            self.get_logger().info(f'Best move: {move.uci()}')
 
             msg = String()
             msg.data = move.uci()

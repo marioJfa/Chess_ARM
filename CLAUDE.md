@@ -1,5 +1,29 @@
 # CLAUDE.md
 
+## Standing Instructions — Always Follow These
+
+### README
+- Update `README.md` (root) after any significant feature, fix, or refactor — but only when the user gives permission or asks for it
+- The user decides the version number — never bump the version without being told which version we are on
+- Keep the Changelog accurate and complete — every change session gets its own entry
+- **Keep README and changelog clearly ordered and structured**: use consistent heading hierarchy, group related items under sub-bullets, lead each bullet with a bold label (e.g. `**Feature name**`), and order changelog entries newest-first. Within a version entry, order items: new features first, then improvements, then bug fixes.
+
+### Logging
+- Always add `get_logger()` calls to new methods and any code paths that make decisions, change state, or can fail
+- Use the right level: `info` for state changes and key actions, `debug` for per-frame noise, `warn` for unexpected-but-recoverable, `error` for failures
+- Never leave a new method completely without logging — even a single info on entry/exit is sufficient
+- When asked to add a feature, check surrounding code for missing logs and add them too
+- **Keep log messages clearly ordered and structured**: include a state/context prefix (e.g. `[TRACKING]`, `[MONITOR]`, `[CAM]`) and key variable values so logs read as a clear narrative — avoid vague messages like "done" or "called"
+
+### vision_calib_gui.py (ArmTunerGUI)
+- NEVER remove a tab, slider, button, or parameter from the tuning GUI without explicit permission
+- When adding new tunable parameters to any node, add the corresponding slider/control to the GUI
+- Keep all existing functionality intact when refactoring the GUI
+
+### General
+- When making changes across multiple files, check all related files for consistency
+- After autocompact: re-read CLAUDE.md at session start — these instructions always apply
+
 ## Environment
 - ROS 2 Jazzy + Gazebo Harmonic 8.x on Ubuntu 24.04
 - Workspace: `~/Desktop/Arm/`
@@ -71,7 +95,7 @@ Camera: fixed to `wrist_link` via `camera_joint`, publishes `/camera/image_raw`
 ## Key Files
 ```
 robot_arm_description/
-  urdf/robot_arm.urdf              # v0.4.2 — camera, 7 joints, ros2_control block
+  urdf/robot_arm.urdf              # v0.4.2 — camera, 7 joints, ros2_control block (last changed v0.4.2)
   config/controllers.yaml          # arm_controller + gripper_controller + joint_state_broadcaster
   launch/gazebo.launch.py          # injects CONTROLLERS_YAML_PATH, spawns robot, loads controllers
   worlds/arm_world.sdf             # sensors plugin required for camera
@@ -89,8 +113,10 @@ robot_arm_chess/
   config/chess_params.yaml         # stockfish depth=10, arm plays black
   scripts/board_state_node.py      # /chess/board_state (FEN), /chess/last_move
   scripts/chess_engine_node.py     # /chess/engine_move (UCI)
-  scripts/chess_arm_node.py        # /chess/arm_move, /chess/arm_status
+  scripts/chess_arm_node.py        # /chess/arm_move, /chess/arm_status  (v0.4.7 — capture fix, logging)
+  scripts/chess_vision_node.py     # ArUco homography, piece tracking, human move detection  (v0.4.7)
   scripts/chess_gui.py             # tkinter, click squares or type UCI, /chess/human_move
+  scripts/vision_calib_gui.py      # ArmTunerGUI — 6-tab live param tuning GUI
   worlds/chess_world.sdf           # board + 32 cylinder pieces, sensors plugin included
   launch/chess.launch.py           # full system: gazebo + controllers + chess nodes
 ```
@@ -105,7 +131,9 @@ robot_arm_chess/
 /arm_controller/follow_joint_trajectory     <- action server (MoveIt uses this)
 /gripper_controller/follow_joint_trajectory <- action server
 /camera/image_raw                           <- gz_ros_bridge (remapped from /camera/image)
-/chess/human_move                           <- GUI publishes UCI string (e.g. "e2e4")
+/chess/human_move                           <- vision OR GUI publishes UCI string (e.g. "e2e4")
+/chess/vision/white_squares                 <- JSON list of squares with white pieces
+/chess/vision/debug_image                   <- annotated camera feed (subscribe in rqt_image_view)
 /chess/board_state                          <- FEN string, updated after every move
 /chess/engine_move                          <- Stockfish best move UCI
 /chess/arm_move                             <- confirms arm executed move
@@ -160,5 +188,15 @@ ros2 action list
 - [ ] Replace cylinder chess pieces with STL meshes
 - [ ] Add castling / en-passant to chess_arm_node
 - [ ] Switch chess_arm_node from analytical IK to MoveIt planning
-- [ ] Vision pipeline: detect real board from `/camera/image_raw`
 - [ ] Fusion 360 STL meshes for arm links (`robot_arm_description/meshes/`)
+- [x] Vision pipeline: camera detects human moves via ArUco+homography (v0.4.6/0.4.7)
+- [x] Vision-driven move detection — arm waits for camera stability before sampling (v0.4.7)
+
+## Chess Scripts — Key Behaviours (v0.4.7)
+- `chess_vision_node.py` — all detection gated on `arm_idle AND _markers_stable`
+  (ArUco centroid drift < 2px for 8 frames = camera truly still)
+- `chess_vision_node.py` — publishes `/chess/human_move` automatically when stable piece
+  change detected; simple move (1 gone + 1 appeared) or capture (1 gone + brightness change)
+- `chess_arm_node.py` — `human_move_cb` fetches `cap_model` and `moving_model` before
+  any teleport; `cap_model != moving_model` guard prevents double-graveyard bug
+- `_init_piece_map()` clears dict before rebuild — prevents stale entries across game resets

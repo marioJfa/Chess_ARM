@@ -5,7 +5,9 @@ Terminal + tkinter GUI for the human player.
 Displays board state, accepts human move input, shows arm status.
 
 Publishes:
-  /chess/human_move   (std_msgs/String) — validated human move in UCI
+  /chess/gui_move     (std_msgs/String) — GUI-submitted move: Gazebo teleport only.
+                                          chess_vision_node detects the teleport and
+                                          publishes /chess/human_move to trigger the game.
 
 Subscribes:
   /chess/board_state  (std_msgs/String) — FEN string
@@ -55,7 +57,7 @@ class ChessGUI(Node):
         self.last_arm_move = None
 
         # Publishers
-        self.human_pub = self.create_publisher(String, '/chess/human_move', 10)
+        self.human_pub = self.create_publisher(String, '/chess/gui_move', 10)
         self.cmd_pub   = self.create_publisher(String, '/chess/cmd',        10)
 
         # Subscribers
@@ -226,6 +228,12 @@ class ChessGUI(Node):
                 msg.data = uci
                 self.human_pub.publish(msg)
                 self._log(f'You: {uci}')
+                # Immediately update local board so the canvas redraws at once.
+                # The authoritative state syncs back via /chess/board_state once
+                # vision confirms the physical move.
+                self.board.push(move)
+                self.root.after(0, self._draw_board)
+                self.root.after(0, lambda: self.status_var.set('Waiting for camera...'))
             else:
                 self._log(f'Illegal: {uci}')
         except ValueError:

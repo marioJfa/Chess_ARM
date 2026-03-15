@@ -8,12 +8,15 @@ Teleports Gazebo piece models via gz service to match arm motion.
 Subscribes:
   /chess/engine_move   (std_msgs/String) — arm's move in UCI (e.g. e7e5)
   /chess/board_state   (std_msgs/String) — FEN for capture detection
-  /chess/human_move    (std_msgs/String) — human move, teleport pieces in sim
+  /chess/human_move    (std_msgs/String) — vision-confirmed human move: update piece_map
+  /chess/gui_move      (std_msgs/String) — GUI-submitted move: Gazebo teleport only, no game trigger
 
 Publishes:
   /chess/arm_move      (std_msgs/String) — confirms move executed
   /chess/arm_status    (std_msgs/String) — IDLE / MOVING / DONE / ERROR
 """
+
+import json
 
 import rclpy
 from rclpy.node import Node
@@ -59,12 +62,17 @@ class ChessArmNode(Node):
         self.declare_parameter('origin_y',     -0.175)
         self.declare_parameter('origin_z',      0.02)
         self.declare_parameter('square_size',   0.045)
-        self.declare_parameter('grasp_height',  0.04)
-        self.declare_parameter('lift_height',   0.20)
-        self.declare_parameter('hover_height',  0.12)
-        self.declare_parameter('gripper_open',  0.0)
-        self.declare_parameter('gripper_closed',1.05)
-        self.declare_parameter('move_duration', 2.5)
+        self.declare_parameter('grasp_height',      0.04)   # legacy — maps to piece_grasp_height
+        self.declare_parameter('pawn_grasp_height',  0.04)   # grasp depth for pawns
+        self.declare_parameter('piece_grasp_height', 0.04)   # grasp depth for back-rank pieces
+        self.declare_parameter('place_grasp_height', 0.04)   # grasp depth when placing
+        self.declare_parameter('grasp_x_offset',     0.0)    # world-frame XY nudge at grasp step
+        self.declare_parameter('grasp_y_offset',     0.0)
+        self.declare_parameter('lift_height',        0.20)
+        self.declare_parameter('hover_height',        0.12)
+        self.declare_parameter('gripper_open',       0.0)
+        self.declare_parameter('gripper_closed',     1.05)
+        self.declare_parameter('move_duration',      2.5)
         self.declare_parameter('board_flip', False)
 
         # Standby pose params (live-tunable from GUI)
@@ -78,12 +86,17 @@ class ChessArmNode(Node):
         self.oz         = self.get_parameter('origin_z').value
         self.sq         = self.get_parameter('square_size').value
         self.board_flip = self.get_parameter('board_flip').value
-        self.z_grasp    = self.get_parameter('grasp_height').value
-        self.z_lift     = self.get_parameter('lift_height').value
-        self.z_hover    = self.get_parameter('hover_height').value
-        self.g_open     = self.get_parameter('gripper_open').value
-        self.g_close    = self.get_parameter('gripper_closed').value
-        self.dur        = self.get_parameter('move_duration').value
+        self.z_grasp         = self.get_parameter('grasp_height').value       # legacy
+        self.z_pawn_grasp    = self.get_parameter('pawn_grasp_height').value
+        self.z_piece_grasp   = self.get_parameter('piece_grasp_height').value
+        self.z_place_grasp   = self.get_parameter('place_grasp_height').value
+        self.grasp_x_offset  = self.get_parameter('grasp_x_offset').value
+        self.grasp_y_offset  = self.get_parameter('grasp_y_offset').value
+        self.z_lift          = self.get_parameter('lift_height').value
+        self.z_hover         = self.get_parameter('hover_height').value
+        self.g_open          = self.get_parameter('gripper_open').value
+        self.g_close         = self.get_parameter('gripper_closed').value
+        self.dur             = self.get_parameter('move_duration').value
 
         self.sb_base_yaw       = self.get_parameter('standby_base_yaw').value
         self.sb_shoulder_roll  = self.get_parameter('standby_shoulder_roll').value
@@ -96,11 +109,13 @@ class ChessArmNode(Node):
         self.busy  = False
 
         # Piece tracking: square_name -> gz model name  e.g. 'e2' -> 'wp_pe2'
-        self._piece_map  = {}
-        self._grave_idx  = 0
+        self._piece_map        = {}
+        self._grave_idx        = 0
+        self._pending_gui_moves = set()  # UCI moves already handled by gui_move_cb
         self._init_piece_map()
 
         self._latest_joint_states = None   # updated by /joint_states subscriber
+        self._piece_centroids     = {}     # sq → (world_x, world_y) from vision node
 
         # Publishers
         self.arm_pub     = self.create_publisher(
@@ -120,8 +135,12 @@ class ChessArmNode(Node):
             String, '/chess/board_state', self.board_state_cb, 10)
         self.human_sub = self.create_subscription(
             String, '/chess/human_move', self.human_move_cb, 10)
+        self.gui_sub = self.create_subscription(
+            String, '/chess/gui_move', self.gui_move_cb, 10)
         self.cmd_sub = self.create_subscription(
             String, '/chess/cmd', self.cmd_cb, 10)
+        self.centroids_sub = self.create_subscription(
+            String, '/chess/vision/piece_centroids', self._centroids_cb, 10)
 
         self.publish_status('IDLE')
         self.get_logger().info('Chess arm node ready')
@@ -133,17 +152,22 @@ class ChessArmNode(Node):
     def _on_param_change(self, params):
         for p in params:
             n, v = p.name, p.value
-            if n == 'origin_x':            self.ox         = v
-            elif n == 'origin_y':          self.oy         = v
-            elif n == 'origin_z':          self.oz         = v
-            elif n == 'square_size':       self.sq         = v
-            elif n == 'board_flip':        self.board_flip = v
-            elif n == 'grasp_height':      self.z_grasp    = v
-            elif n == 'lift_height':       self.z_lift     = v
-            elif n == 'hover_height':      self.z_hover    = v
-            elif n == 'gripper_open':      self.g_open     = v
-            elif n == 'gripper_closed':    self.g_close    = v
-            elif n == 'move_duration':     self.dur        = v
+            if n == 'origin_x':              self.ox              = v
+            elif n == 'origin_y':            self.oy              = v
+            elif n == 'origin_z':            self.oz              = v
+            elif n == 'square_size':         self.sq              = v
+            elif n == 'board_flip':          self.board_flip      = v
+            elif n == 'grasp_height':        self.z_grasp         = v   # legacy
+            elif n == 'pawn_grasp_height':   self.z_pawn_grasp    = v
+            elif n == 'piece_grasp_height':  self.z_piece_grasp   = v
+            elif n == 'place_grasp_height':  self.z_place_grasp   = v
+            elif n == 'grasp_x_offset':      self.grasp_x_offset  = v
+            elif n == 'grasp_y_offset':      self.grasp_y_offset  = v
+            elif n == 'lift_height':         self.z_lift          = v
+            elif n == 'hover_height':        self.z_hover         = v
+            elif n == 'gripper_open':        self.g_open          = v
+            elif n == 'gripper_closed':      self.g_close         = v
+            elif n == 'move_duration':       self.dur             = v
             elif n == 'standby_base_yaw':       self.sb_base_yaw       = v
             elif n == 'standby_shoulder_roll':  self.sb_shoulder_roll  = v
             elif n == 'standby_shoulder_pitch': self.sb_shoulder_pitch = v
@@ -205,6 +229,7 @@ class ChessArmNode(Node):
             self._teleport(f'bp_p{files[i]}7', x, y, PAWN_Z)
         self.board = chess.Board()
         self._grave_idx = 0
+        self._pending_gui_moves.clear()
         self._init_piece_map()
         self.busy = False
         self.publish_status('IDLE')
@@ -264,6 +289,14 @@ class ChessArmNode(Node):
     def _piece_z(self, model_name):
         """Return correct z for a piece model sitting on the board."""
         return PAWN_Z if '_p' in model_name[3:] else PIECE_Z
+
+    def _grasp_height(self, model_name: str | None) -> float:
+        """Return per-piece-type grasp height.  Pawns use pawn_grasp_height,
+        all other pieces use piece_grasp_height.  Falls back to legacy
+        grasp_height if the per-type param is still at its default (0.04)."""
+        if model_name and '_p' in model_name[3:]:
+            return self.z_pawn_grasp
+        return self.z_piece_grasp
 
     def _apply_move_to_map(self, move: chess.Move):
         """Update piece_map for any move (human or engine)."""
@@ -375,23 +408,44 @@ class ChessArmNode(Node):
         self.send_arm(sol, duration)
 
     # ── Pick and place ────────────────────────────────────────────────────────
-    def pick_piece(self, square: chess.Square):
-        self.get_logger().info(f'Picking from {chess.square_name(square)}')
+    def pick_piece(self, square: chess.Square, model_name: str = None):
+        gh      = self._grasp_height(model_name)
+        sq_name = chess.square_name(square)
+        # XY base: camera centroid when available, otherwise tile centre.
+        # TODO: fill in camera back-projection here once centroid computation is validated.
+        centroid = self._piece_centroids.get(sq_name)
+        if centroid:
+            cx, cy = centroid
+            src = 'centroid'
+        else:
+            cx, cy, _ = self.square_to_xyz(square)
+            src = 'tile-centre'
+        self.get_logger().info(
+            f'[PICK] {sq_name}  model={model_name}  src={src}  '
+            f'xy=({cx:.4f},{cy:.4f})  grasp_h={gh:.3f}  '
+            f'xy_off=({self.grasp_x_offset:.3f},{self.grasp_y_offset:.3f})')
+
         self.send_gripper(self.g_open)
-        x, y, z = self.square_to_xyz(square, self.z_hover)
-        self.move_to_xyz(x, y, z)
-        x, y, z = self.square_to_xyz(square, self.z_grasp)
-        self.move_to_xyz(x, y, z, duration=1.5)
+        # Hover — approach from directly above the XY target
+        _, _, z_h = self.square_to_xyz(square, self.z_hover)
+        self.move_to_xyz(cx, cy, z_h)
+        # Grasp — apply tunable XY offset at the lowest point
+        _, _, z_g = self.square_to_xyz(square, gh)
+        self.move_to_xyz(cx + self.grasp_x_offset, cy + self.grasp_y_offset, z_g, duration=1.5)
         self.send_gripper(self.g_close)
-        x, y, z = self.square_to_xyz(square, self.z_lift)
-        self.move_to_xyz(x, y, z, duration=1.5)
+        _, _, z_l = self.square_to_xyz(square, self.z_lift)
+        self.move_to_xyz(cx, cy, z_l, duration=1.5)
 
     def place_piece(self, square: chess.Square, model_name: str = None):
-        self.get_logger().info(f'Placing on {chess.square_name(square)}')
+        gh = self._grasp_height(model_name)
+        self.get_logger().info(
+            f'[PLACE] {chess.square_name(square)}  model={model_name}  '
+            f'grasp_h={gh:.3f}  xy_off=({self.grasp_x_offset:.3f},{self.grasp_y_offset:.3f})')
         x, y, z = self.square_to_xyz(square, self.z_hover)
         self.move_to_xyz(x, y, z)
-        x, y, z = self.square_to_xyz(square, self.z_grasp)
-        self.move_to_xyz(x, y, z, duration=1.5)
+        # Lower to place depth with tunable XY offset
+        x, y, z = self.square_to_xyz(square, gh)
+        self.move_to_xyz(x + self.grasp_x_offset, y + self.grasp_y_offset, z, duration=1.5)
         # Teleport piece to destination as the arm lowers to place it
         if model_name:
             px, py, _ = self.square_to_xyz(square)
@@ -401,10 +455,10 @@ class ChessArmNode(Node):
         self.move_to_xyz(x, y, z, duration=1.5)
 
     def remove_captured_piece(self, square: chess.Square, model_name: str = None):
-        self.get_logger().info(f'Removing captured piece from {chess.square_name(square)}')
+        self.get_logger().info(f'[CAPTURE] Removing {model_name} from {chess.square_name(square)}')
         if model_name:
             self._teleport_to_graveyard(model_name)
-        self.pick_piece(square)
+        self.pick_piece(square, model_name)
         self.move_to_xyz(self.ox - 0.10, self.oy - 0.05, self.z_hover)
         self.send_gripper(self.g_open)
         self.move_to_xyz(self.ox - 0.10, self.oy - 0.05, self.z_lift)
@@ -427,40 +481,94 @@ class ChessArmNode(Node):
         self._wait_for_arm_stop()
         self.publish_status('IDLE')
 
+    # ── Vision centroid helper ────────────────────────────────────────────────
+    def _wait_for_centroid(self, square: chess.Square, timeout: float = 2.0):
+        """Poll _piece_centroids until the square is available, then return (world_x, world_y).
+        Falls back to tile centre after timeout."""
+        sq_name = chess.square_name(square)
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if sq_name in self._piece_centroids:
+                cx, cy = self._piece_centroids[sq_name]
+                self.get_logger().info(
+                    f'[CENTROID] {sq_name} from vision: ({cx:.4f},{cy:.4f})')
+                return cx, cy
+            time.sleep(0.05)
+        cx, cy, _ = self.square_to_xyz(square)
+        self.get_logger().warn(
+            f'[CENTROID] {sq_name} not available after {timeout:.1f}s '
+            f'— falling back to tile centre ({cx:.4f},{cy:.4f})')
+        return cx, cy
+
     # ── Main move execution ───────────────────────────────────────────────────
     def execute_move(self, uci: str):
         self.publish_status('MOVING')
         try:
-            move     = chess.Move.from_uci(uci)
-            from_sq  = move.from_square
-            to_sq    = move.to_square
+            move      = chess.Move.from_uci(uci)
+            from_sq   = move.from_square
+            to_sq     = move.to_square
             from_name = chess.square_name(from_sq)
             to_name   = chess.square_name(to_sq)
 
-            # Handle capture — teleport captured piece to graveyard + arm animation
+            # ── Pre-compute all positions BEFORE moving ───────────────────────
+            moving_model = self._piece_map.get(from_name)
+            pick_gh  = self._grasp_height(moving_model)   # pawn vs piece pick height
+            place_gh = self.z_place_grasp                  # separate place depth
+
+            # From-square XY: wait for vision centroid (falls back to tile centre)
+            fx, fy = self._wait_for_centroid(from_sq)
+            fx += self.grasp_x_offset
+            fy += self.grasp_y_offset
+
+            # To-square XY: tile centre (piece not there yet — no centroid to read)
+            tx, ty, _ = self.square_to_xyz(to_sq)
+
+            # All Z levels
+            _, _, pick_z_hover  = self.square_to_xyz(from_sq, self.z_hover)
+            _, _, pick_z_grasp  = self.square_to_xyz(from_sq, pick_gh)
+            _, _, pick_z_lift   = self.square_to_xyz(from_sq, self.z_lift)
+            _, _, place_z_hover = self.square_to_xyz(to_sq, self.z_hover)
+            _, _, place_z_grasp = self.square_to_xyz(to_sq, place_gh)
+            _, _, place_z_lift  = self.square_to_xyz(to_sq, self.z_lift)
+
+            self.get_logger().info(
+                f'[PLAN] {uci}  '
+                f'pick=({fx:.4f},{fy:.4f},{pick_z_grasp:.4f})  '
+                f'place=({tx:.4f},{ty:.4f},{place_z_grasp:.4f})  '
+                f'hover_z={pick_z_hover:.3f}  lift_z={pick_z_lift:.3f}')
+
+            # ── Capture first ─────────────────────────────────────────────────
             if self.board.is_capture(move):
-                self.get_logger().info('Capture — removing piece first')
+                self.get_logger().info('[PLAN] Capture — removing piece first')
                 cap_model = self._piece_map.get(to_name)
                 self.remove_captured_piece(to_sq, cap_model)
 
-            # Get the model being moved
-            moving_model = self._piece_map.get(from_name)
+            # ── Pick ──────────────────────────────────────────────────────────
+            self.send_gripper(self.g_open)
+            self.move_to_xyz(fx, fy, pick_z_hover)
+            self.move_to_xyz(fx, fy, pick_z_grasp, duration=1.5)
+            self.send_gripper(self.g_close)
+            self.move_to_xyz(fx, fy, pick_z_lift, duration=1.5)
 
-            # Pick and place (piece teleports to destination inside place_piece)
-            self.pick_piece(from_sq)
-            self.place_piece(to_sq, moving_model)
+            # ── Place ─────────────────────────────────────────────────────────
+            self.move_to_xyz(tx, ty, place_z_hover)
+            self.move_to_xyz(tx, ty, place_z_grasp, duration=1.5)
+            if moving_model:
+                px, py, _ = self.square_to_xyz(to_sq)
+                self._teleport(moving_model, px, py, self._piece_z(moving_model))
+            self.send_gripper(self.g_open)
+            self.move_to_xyz(tx, ty, place_z_lift, duration=1.5)
 
-            # Update internal map
+            # ── Finish ────────────────────────────────────────────────────────
             self._apply_move_to_map(move)
-
             self.return_home()
-            self._wait_for_arm_stop()   # arm physically stopped → safe to sample
+            self._wait_for_arm_stop()
 
             msg = String()
             msg.data = uci
             self.confirm_pub.publish(msg)
             self.publish_status('DONE')
-            self.get_logger().info(f'Move {uci} executed')
+            self.get_logger().info(f'[PLAN] Move {uci} complete')
 
         except Exception as e:
             self.get_logger().error(f'Move execution failed: {e}')
@@ -487,29 +595,120 @@ class ChessArmNode(Node):
             target=self.execute_move, args=(uci,), daemon=True)
         thread.start()
 
-    def human_move_cb(self, msg: String):
-        """Teleport human's piece in Gazebo to keep sim in sync."""
+    def gui_move_cb(self, msg: String):
+        """Teleport a GUI-submitted piece in Gazebo — does NOT update game state.
+
+        The GUI sends moves here so the simulation stays visually in sync.
+        chess_vision_node will detect the teleport and publish to /chess/human_move,
+        which is what actually triggers the game engine.  This separation ensures
+        the arm only responds after camera confirmation — matching real-world behaviour.
+        """
         uci = msg.data.strip()
+        self.get_logger().info(f'GUI move for Gazebo teleport: {uci}')
         try:
             move      = chess.Move.from_uci(uci)
             from_name = chess.square_name(move.from_square)
             to_name   = chess.square_name(move.to_square)
 
-            # Teleport captured piece to graveyard
-            cap_model = self._piece_map.get(to_name)
-            if cap_model:
+            cap_model    = self._piece_map.get(to_name)
+            moving_model = self._piece_map.get(from_name)
+
+            if not moving_model:
+                self.get_logger().warn(
+                    f'gui_move_cb: no model for {from_name} — piece_map may be stale')
+                return
+
+            # Teleport captured piece to graveyard — only if cap_model belongs to
+            # the opponent (prevents graveyard-ing a friendly piece on the target square).
+            mover_is_white = moving_model.startswith('wp_')
+            if (cap_model and cap_model != moving_model and
+                    mover_is_white == cap_model.startswith('bp_')):
+                self.get_logger().info(f'GUI capture: {cap_model} on {to_name} → graveyard')
                 self._teleport_to_graveyard(cap_model)
 
             # Teleport moving piece to destination
-            model = self._piece_map.get(from_name)
-            if model:
+            px, py, _ = self.square_to_xyz(move.to_square)
+            self._teleport(moving_model, px, py, self._piece_z(moving_model))
+            self.get_logger().info(
+                f'GUI teleport: {moving_model}  {from_name} → {to_name}  ({px:.3f}, {py:.3f})')
+
+            # Update piece map now so it stays consistent with Gazebo state.
+            # Register the UCI so human_move_cb (triggered by vision) knows to
+            # skip the re-teleport and re-map-update for this move.
+            self._apply_move_to_map(move)
+            self._pending_gui_moves.add(uci)
+            self.get_logger().info(
+                f'GUI teleport complete — awaiting vision confirmation  '
+                f'pending={self._pending_gui_moves}')
+
+        except Exception as e:
+            self.get_logger().warn(f'gui_move_cb: {e}')
+
+    def human_move_cb(self, msg: String):
+        """Handle vision-confirmed human move: update piece_map and sync Gazebo.
+
+        If the GUI already teleported this piece via gui_move_cb, skip the
+        re-teleport and map update — just acknowledge and let the engine respond.
+        """
+        uci = msg.data.strip()
+        self.get_logger().info(f'Human move confirmed by vision: {uci}')
+
+        if uci in self._pending_gui_moves:
+            self._pending_gui_moves.discard(uci)
+            self.get_logger().info(
+                f'GUI move confirmed: {uci} — piece_map already updated, skipping re-teleport')
+            return
+        try:
+            move      = chess.Move.from_uci(uci)
+            from_name = chess.square_name(move.from_square)
+            to_name   = chess.square_name(move.to_square)
+
+            # Fetch both models before any teleports to avoid stale-map double-teleport
+            cap_model    = self._piece_map.get(to_name)
+            moving_model = self._piece_map.get(from_name)
+
+            if not moving_model:
+                self.get_logger().warn(
+                    f'human_move_cb: no model for {from_name} — piece_map may be stale')
+
+            # Teleport captured piece to graveyard.
+            # Guard: cap_model must belong to the *opponent* of the mover so that
+            # a stale second fire (after gui_move_cb already updated the map) cannot
+            # graveyard the white piece that now sits on to_name.
+            mover_is_white = moving_model is not None and moving_model.startswith('wp_')
+            cap_is_opponent = (cap_model is not None and
+                               cap_model != moving_model and
+                               (mover_is_white == cap_model.startswith('bp_')))
+            if cap_is_opponent:
+                self.get_logger().info(f'Capture: {cap_model} on {to_name} → graveyard')
+                self._teleport_to_graveyard(cap_model)
+            elif cap_model and not cap_is_opponent:
+                self.get_logger().warn(
+                    f'human_move_cb: skipped cap_model={cap_model} '
+                    f'(same color or same model as mover={moving_model})')
+
+            # Teleport moving piece to destination
+            if moving_model:
                 px, py, _ = self.square_to_xyz(move.to_square)
-                self._teleport(model, px, py, self._piece_z(model))
+                self._teleport(moving_model, px, py, self._piece_z(moving_model))
+                self.get_logger().info(
+                    f'Teleport: {moving_model}  {from_name} → {to_name}  ({px:.3f}, {py:.3f})')
 
             self._apply_move_to_map(move)
+            self.get_logger().info(
+                f'Human move applied: {uci}  piece_map={len(self._piece_map)}')
 
         except Exception as e:
             self.get_logger().warn(f'human_move_cb: {e}')
+
+    def _centroids_cb(self, msg: String):
+        """Cache latest per-square world XY centroids from the vision node."""
+        try:
+            self._piece_centroids = json.loads(msg.data)
+            self.get_logger().debug(
+                f'[CENTROIDS] received {len(self._piece_centroids)} centroids')
+        except Exception as e:
+            self.get_logger().warn(f'_centroids_cb: {e}')
 
     def publish_status(self, status: str):
         msg = String()

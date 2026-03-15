@@ -1,29 +1,17 @@
-# robot_arm_description
+# Robot Arm — ROS 2 Chess System
 
-ROS 2 Jazzy · Gazebo Harmonic 8.x  
-3-DOF robotic arm with 3-finger gripper — URDF simulation package.
+ROS 2 Jazzy · Gazebo Harmonic 8.x
+3-DOF arm with 3-finger gripper — simulated chess-playing robot with vision pipeline.
 
 ---
 
-## Package Structure
+## Packages
 
-```
-robot_arm_description/
-├── urdf/
-│   └── robot_arm.urdf          # Robot description (links, joints, gazebo tags, ros2_control)
-├── config/
-│   └── controllers.yaml        # ros2_control: arm_controller + gripper_controller
-├── launch/
-│   ├── display.launch.py       # RViz only (no physics)
-│   └── gazebo.launch.py        # Full Gazebo Harmonic simulation
-├── worlds/
-│   └── arm_world.sdf           # Ground plane + target box
-├── meshes/                     # Empty — drop Fusion 360 STL exports here
-├── rviz/
-│   └── robot_arm.rviz          # Pre-configured RViz layout
-├── CMakeLists.txt
-└── package.xml
-```
+| Package | Purpose |
+|---|---|
+| `robot_arm_description` | URDF, Gazebo world, controllers, wrist camera |
+| `robot_arm_moveit` | MoveIt 2 config, SRDF, IK, RViz launch |
+| `robot_arm_chess` | Stockfish engine, board state, arm controller, vision, GUI |
 
 ---
 
@@ -34,19 +22,19 @@ world (fixed)
  └─ base_link                   cylinder  Ø120×60mm   0.5 kg
      └─ [base_yaw]              revolute  Z   ±180°
          └─ shoulder_roll_link  cylinder  Ø50×40mm    0.08 kg
-             └─ [shoulder_roll] revolute  X   ±45°
+             └─ [shoulder_roll] revolute  Y   ±45°
                  └─ upper_arm   box       40×40×200mm 0.3 kg
                      └─ [shoulder_pitch]  revolute  Y  -90° to +135°
                          └─ forearm       box  35×35×180mm  0.25 kg
                              └─ [elbow_pitch]  revolute  Y  ±120°
                                  └─ wrist_link  cylinder  Ø60×50mm  0.1 kg
-                                     ├─ [finger_1_joint]  revolute  0° to -70°
-                                     ├─ [finger_2_joint]  revolute  0° to -70°
-                                     ├─ [finger_3_joint]  revolute  0° to -70°
+                                     ├─ [finger_1/2/3_joint]  revolute  0° to -70°
+                                     ├─ camera_link  (fixed, wrist-mounted)
                                      └─ tool0  (massless end-effector frame)
 ```
 
-**Total links:** 10 · **Total joints:** 9 · **Controllable DOF:** 7
+**Finger convention:** `0.0` = open · `-1.2217` = closed
+**Total joints:** 9 · **Controllable DOF:** 7
 
 ---
 
@@ -57,14 +45,9 @@ sudo apt install \
   ros-jazzy-robot-state-publisher \
   ros-jazzy-joint-state-publisher-gui \
   ros-jazzy-rviz2 \
-  ros-jazzy-ros-gz \
-  ros-jazzy-ros-gz-sim \
-  ros-jazzy-ros-gz-bridge \
-  ros-jazzy-gz-ros2-control \
-  ros-jazzy-ros2-control \
-  ros-jazzy-ros2-controllers \
-  gz-harmonic \
-  liburdfdom-tools
+  ros-jazzy-ros-gz ros-jazzy-ros-gz-sim ros-jazzy-ros-gz-bridge \
+  ros-jazzy-gz-ros2-control ros-jazzy-ros2-control ros-jazzy-ros2-controllers \
+  gz-harmonic liburdfdom-tools python3-opencv python3-chess stockfish
 ```
 
 ---
@@ -72,197 +55,227 @@ sudo apt install \
 ## Build
 
 ```bash
-# First time — use symlink-install so edits take effect without rebuilding
-cd ~/ros2_ws
-colcon build --packages-select robot_arm_description --symlink-install
+cd ~/Desktop/Arm
+colcon build --symlink-install
 source install/setup.bash
 ```
 
-After `--symlink-install`, edits to URDF, YAML, SDF, and launch files are **live immediately**.  
+After `--symlink-install`, edits to URDF, YAML, SDF, and launch files are **live immediately**.
 Only rebuild if you add new files or change `CMakeLists.txt`.
 
 ---
 
 ## Running
 
-### RViz (visual check, no physics)
+### Full chess system (recommended)
 ```bash
-ros2 launch robot_arm_description display.launch.py
-```
-Use the **Joint State Publisher GUI** sliders to move all joints.
+# Terminal 1 — Gazebo + controllers + all chess nodes
+chmod +x ~/Desktop/Arm/robot_arm_chess/scripts/*.py
+ros2 launch robot_arm_chess chess.launch.py
 
-### Gazebo Harmonic (full physics simulation)
+# Terminal 2 — Camera debug feed
+ros2 run rqt_image_view rqt_image_view
+# Subscribe to /chess/vision/debug_image
+```
+
+### Arm simulation only
 ```bash
+# Terminal 1
 ros2 launch robot_arm_description gazebo.launch.py
-```
 
-### Validate URDF structure
-```bash
-check_urdf ~/ros2_ws/src/robot_arm_description/urdf/robot_arm.urdf
+# Terminal 2
+ros2 launch robot_arm_moveit moveit.launch.py
 ```
 
 ---
 
-## Sending Commands
+## Chess System Architecture
 
-### Slider GUI controller (recommended)
-```bash
-# In a second terminal while Gazebo is running
-ros2 run robot_arm_description arm_slider_gui.py
 ```
-Sliders for all joints in degrees, adjustable move duration, and preset buttons.
-
-### Move arm joints (terminal)
-```bash
-ros2 topic pub /arm_controller/joint_trajectory \
-  trajectory_msgs/msg/JointTrajectory \
-  '{
-    joint_names: [base_yaw, shoulder_roll, shoulder_pitch, elbow_pitch],
-    points: [{positions: [0.5, 0.2, 0.8, -0.5], time_from_start: {sec: 2}}]
-  }' --once
-```
-
-### Close gripper
-```bash
-ros2 topic pub /gripper_controller/joint_trajectory \
-  trajectory_msgs/msg/JointTrajectory \
-  '{
-    joint_names: [finger_1_joint, finger_2_joint, finger_3_joint],
-    points: [{positions: [-1.0, -1.0, -1.0], time_from_start: {sec: 1}}]
-  }' --once
+/camera/image_raw
+        │
+        ▼
+chess_vision_node  ──────────────────────────────────────────────────────
+  • ArUco 4-marker homography (16-pt LMEDS overdetermined)               │
+  • Gated on: arm_idle AND _markers_stable (ArUco centroid drift < 2px)  │
+  • SEARCHING → WAIT_EMPTY → CAPTURING_REF → WAIT_PIECES → TRACKING      │
+  • Detects human piece move → publishes /chess/human_move               │
+        │                                                                 │
+        ▼                                                                 │
+board_state_node  (FEN tracking)                                         │
+        │                                                                 │
+        ▼                                                                 │
+chess_engine_node  (Stockfish depth=10, plays black)                     │
+        │                                                                 │
+        ▼                                                                 │
+chess_arm_node  ─────────────────────────────────────────────────────────
+  • Analytical IK → /arm_controller/joint_trajectory
+  • Teleports pieces in Gazebo to match real board state
+  • Publishes /chess/arm_status (IDLE/MOVING/DONE/ERROR)
 ```
 
-### Open gripper
-```bash
-ros2 topic pub /gripper_controller/joint_trajectory \
-  trajectory_msgs/msg/JointTrajectory \
-  '{
-    joint_names: [finger_1_joint, finger_2_joint, finger_3_joint],
-    points: [{positions: [0.0, 0.0, 0.0], time_from_start: {sec: 1}}]
-  }' --once
+### Vision pipeline states
+
+| State | Meaning | Entry condition |
+|---|---|---|
+| SEARCHING | Looking for ArUco markers | startup / RESET without grid |
+| WAIT_EMPTY | Board found, waiting for calibration | ArUco 4-marker detected |
+| CAPTURING_REF | Recording empty-board brightness reference | RECAL command |
+| WAIT_PIECES | Waiting for all 32 pieces to be placed | Reference captured |
+| TRACKING | Live game — detecting moves | All 32 pieces seen |
+
+### Key topics
+
+```
+/chess/human_move          ← vision publishes detected human moves (UCI)
+/chess/engine_move         ← Stockfish best move
+/chess/arm_status          ← IDLE / MOVING / DONE / ERROR
+/chess/board_state         ← FEN string
+/chess/last_move           ← last executed UCI move
+/chess/cmd                 ← command bus: RECAL, RESET, REMOVE_PIECES, STANDBY
+/chess/vision/debug_image  ← annotated camera feed
 ```
 
-### Check active controllers
+### GUI commands
+
+```
+RECAL           — remove pieces, capture empty-board reference, return to tracking
+RESET           — reset game to start position (keeps vision calibration)
+REMOVE_PIECES   — teleport all pieces to graveyard
+RETURN_PIECES   — return pieces to starting squares
+STANDBY         — move arm to standby pose
+```
+
+---
+
+## Tuning GUI
+
 ```bash
+python3 ~/Desktop/Arm/robot_arm_chess/scripts/vision_calib_gui.py
+```
+
+Tabs: **Vision** · **Detection** · **Board Setup** · **Movement** · **Standby** · **Commands**
+
+All parameters update live via ROS 2 `SetParameters` service — no restart needed.
+
+---
+
+## Debugging
+
+```bash
+# Controllers loaded?
 ros2 control list_controllers
+
+# Camera publishing?
+ros2 topic hz /camera/image_raw
+
+# Chess topics alive?
+ros2 topic list | grep chess
+
+# Send test human move
+ros2 topic pub --once /chess/human_move std_msgs/msg/String "data: 'e2e4'"
+
+# Trigger calibration
+ros2 topic pub --once /chess/cmd std_msgs/msg/String "data: 'RECAL'"
 ```
-
-### List all ROS topics
-```bash
-ros2 topic list
-```
-
----
-
-## Swapping in Fusion 360 Meshes
-
-1. In Fusion 360: **File → Export → STL**, one body per link
-2. Save each file to `meshes/` — e.g. `meshes/base_link.stl`
-3. In `robot_arm.urdf`, replace each `<geometry><box .../>` or `<cylinder .../>` with:
-   ```xml
-   <geometry>
-     <mesh filename="package://robot_arm_description/meshes/base_link.stl"/>
-   </geometry>
-   ```
-4. Repeat for both `<visual>` and `<collision>` blocks per link
-5. No rebuild needed (symlink-install)
 
 ---
 
 ## Planned / Next Steps
 
-- [ ] Add wrist camera link + Gazebo camera plugin
-- [ ] Add force/torque sensor at wrist
-- [ ] MoveIt 2 integration for IK / path planning
-- [ ] Replace box geometry with Fusion 360 meshes
-- [ ] Pick-and-place demo script
+- [ ] Tune chess pick/place IK coordinates against actual board positions in Gazebo
+- [ ] Replace cylinder chess pieces with STL meshes
+- [ ] Add castling / en-passant support to chess_arm_node
+- [ ] Switch chess_arm_node from analytical IK to MoveIt planning
+- [ ] Fusion 360 STL meshes for arm links
 
 ---
 
 ## Changelog
 
-### v0.4 — All-Y-axis joints + slider GUI controller
-- Changed `shoulder_roll` joint axis from X → Y (now pitches forward/back like all other joints)
-- Changed `finger_2_joint` axis from `0.866 0.5 0` → `0 1 0`
-- Changed `finger_3_joint` axis from `0.866 -0.5 0` → `0 1 0`
+### v0.4.7 — Vision-driven move detection + camera stability gate + bug fixes
+- **Vision-driven human move detection**: camera now detects when a human moves a piece
+  and publishes to `/chess/human_move` automatically — no GUI click needed
+  - Detects simple moves (piece disappears from A, appears on B)
+  - Detects captures (piece disappears from A, brightness changes on occupied B)
+  - `MOVE_STABLE_FRAMES = 15` consecutive frames required before publishing
+- **Camera stability gate** (`_markers_stable`): all detection functions now require
+  BOTH `arm_idle` AND that ArUco marker centroid drift < 2px for 8 consecutive frames
+  - Prevents sampling blurred frames while arm is settling after "IDLE" is published
+  - Applied to: SEARCHING, CAPTURING_REF, WAIT_PIECES, TRACKING idle snapshot, human move monitor
+  - HUD shows `CAM:STILL` / `CAM:DRIFT(n/8)` live
+- **Stability timeout fallback** (`chess_vision_node.py`): if ArUco marker centroid
+  drift never drops below threshold after the arm idles (Gazebo controller oscillation),
+  the idle snapshot fires anyway after 30 frames (~2.5 s) so the game can never get
+  permanently stuck waiting for camera stability
+- **Capture bug fix** (`chess_arm_node.py`): `human_move_cb` now fetches both
+  `cap_model` and `moving_model` before any teleports; added `cap_model != moving_model`
+  guard to prevent the moving piece being sent to graveyard on a stale map
+- **GUI/vision flow fix**: GUI now publishes to `/chess/gui_move` (Gazebo teleport only);
+  vision is the sole publisher of `/chess/human_move` (game trigger); arm skips
+  re-teleport for GUI moves via `_pending_gui_moves` set
+- **GUI visual update fix** (`chess_gui.py`): clicking a piece now pushes the move
+  onto the local board and redraws the canvas immediately; previously the board
+  only updated after `/chess/board_state` arrived from vision (~1+ s later)
+- **Engine reset bug fix** (`chess_engine_node.py`): added `/chess/cmd` subscription;
+  RESET now resets `game_active = True` so a new game can start after checkmate/stalemate
+  (previously `game_active` stayed False and the engine silently ignored all moves)
+- **Double Stockfish analysis removed** (`chess_engine_node.py`): removed the redundant
+  `engine.analyse()` call after `engine.play()` — roughly halves engine response time
+- **Post-RESET auto-snapshot**: after RESET, pieces teleport back via Popen (no arm
+  motion → no `_arm_just_idled`); 60-frame settle counter + marker stability check
+  auto-snapshots the board and re-enables human move monitoring
+- Added comprehensive logging to `_update_marker_stability`, `_monitor_human_move`,
+  `human_move_cb` — all key decision branches now log at appropriate levels
+
+### v0.4.6 — Board detection + full GUI tuning
+- ArUco 4-marker homography (16-pt LMEDS overdetermined) — accurate perspective grid
+- Hough fallback commented out (kept for reference); ArUco is primary detector
+- Full `ArmTunerGUI` with 6 tabs: Vision, Detection, Board Setup, Movement, Standby, Commands
+- Live `SetParameters` to both vision and arm nodes from GUI
+- bx/by coordinate swap fix — board squares were 90° off; rank → bx, file → by
+- RECAL semantic fix: mid-game RECAL skips WAIT_PIECES, goes straight to TRACKING
+- RESET semantic fix: keeps grid + empty_ref, resets only game state
+- `_init_piece_map()` clears dict before rebuild — fixed stale-entry capture bug
+
+### v0.4.5 — Bug fixes, standby position, board detection work
+- Fixed right standby position
+- Working ON board detection pipeline
+- Added live param callback for standby pose joints in chess_arm_node
+
+### v0.4.4 — Working chess GUI
+- Tkinter chess GUI with clickable board
+- Human moves via GUI click or UCI text input
+- Bug fixes across chess nodes
+
+### v0.4.3 — Chess system started
+- `robot_arm_chess` package: Stockfish engine node, board state node, arm chess controller
+- Analytical IK for chess pick/place
+- Chess world SDF with 32 cylinder pieces and 4 ArUco board markers
+- `chess.launch.py` — full system in one launch
+
+### v0.4.2 — Camera integration
+- Wrist camera added to URDF (`camera_link`, `camera_joint` fixed to `wrist_link`)
+- Native Gazebo camera sensor format with `gz-sim-sensors-system` plugin
+- `/camera/image_raw` bridged via `gz_ros_bridge`
+- `rqt_image_view` confirmed working (RViz Image display causes segfault — do not use)
+
+### v0.4.0 — All-Y-axis joints + slider GUI
 - All joints except `base_yaw` now rotate around Y axis consistently
-- Added `scripts/joint_slider_controller.py` — tkinter-based slider GUI
-  - Separate sliders for all 4 arm joints and 3 gripper fingers
-  - Live publishing on every slider move (no need to click Send)
-  - 5 presets: HOME, REACH, PICK READY, CLOSE GRIP, OPEN GRIP
-  - Status bar shows last sent positions
-- Added scripts to `CMakeLists.txt` install targets
+- Added `arm_slider_gui.py` — tkinter joint position sliders, 6 presets
+- MoveIt 2 integration with KDL IK solver
 
-### v0.4.0 — Slider GUI controller
-- Added `scripts/arm_slider_gui.py` — tkinter-based joint position slider panel
-- Sliders for all 4 arm joints (degrees) + 3 gripper fingers
-- Adjustable move duration (0.5s–5s)
-- 6 presets: Home, Reach, Pick, Wave, Grip Close, Grip Open
-- Publishes to `/arm_controller/joint_trajectory` and `/gripper_controller/joint_trajectory`
-- ROS spin runs in background thread so GUI stays responsive
-- All joints standardized to Y axis (pitch) — `shoulder_roll`, `shoulder_pitch`, `elbow_pitch`, all fingers now `axis xyz="0 1 0"`
-- `base_yaw` remains on Z axis
+### v0.3.x — Controller + simulation fixes
+- v0.3.6: open-loop control, timing fixes
+- v0.3.5: clock bridge fix — first successful Gazebo run
+- v0.3.4: hardware plugin architecture fix (in-Gazebo `gz_ros2_control`)
+- v0.3.1: inertia tensor fixes (all links from first principles)
 
-### v0.3.6 — Controller timing fix
-- Set `use_sim_time: false` consistently across all nodes and controllers
-- Added `open_loop_control: true` to arm and gripper controllers — prevents position feedback from rejecting commands when sim clock is inconsistent
-- Added `allow_integration_in_goal_trajectories: true` — allows sending trajectories without velocity/acceleration fields
-- Set `stopped_velocity_tolerance: 0.0` — removes strict velocity check that was causing goal rejection
-- Root cause: trajectory timestamps were being compared against wrong clock source, causing immediate goal expiry and snap-back to zero
-
-### v0.3.5 — Clock bridge fix + first successful run
-- All 3 controllers loading and activating successfully in Gazebo Harmonic
-- Fixed `/clock` bridge — added world-scoped clock topic and `use_sim_time` to bridge node
-- `controller_manager` was running on wall clock due to missing sim clock — resolved
-
-### v0.3.4 — Hardware plugin architecture fix (patch)
-- Reverted standalone `ros2_control_node` approach — `gz_ros2_control/GazeboSimSystem` hardware plugin only exists inside Gazebo, not as a standalone ROS node
-- Restored in-Gazebo `libgz_ros2_control-system.so` plugin in URDF
-- Replaced `$(find ...)` xacro syntax with `CONTROLLERS_YAML_PATH` placeholder string
-- Launch file now does `urdf.replace('CONTROLLERS_YAML_PATH', controllers_file)` to inject the real absolute path at launch time
-- Added `GZ_SIM_SYSTEM_PLUGIN_PATH=/opt/ros/jazzy/lib` env var to Gazebo process so plugin `.so` is found
-- Removed standalone `controller_manager` node from launch (controller_manager is now created by the Gazebo plugin)
-
-### v0.3.3 — controller_manager topic fix (patch)
-- In ROS 2 Jazzy, `ros2_control_node` reads `robot_description` from the `/robot_description` **topic**, not a parameter
-- Removed `robot_description` from `controller_manager` parameter dict
-- Added `remappings=[('~/robot_description', '/robot_description')]` so it subscribes to `robot_state_publisher`'s topic
-- Added `use_sim_time: True` to `controller_manager`
-
-### v0.3.2 — Gazebo launch fixes (patch)
-- Removed `$(find ...)` xacro syntax from URDF plugin tag (invalid in plain URDF, caused params-file parse crash)
-- Removed `<parameters>` from URDF plugin block entirely
-- Switched from in-plugin controller loading to standalone `ros2_control_node` in launch file — more reliable with Jazzy + Gazebo Harmonic 8
-- `controllers_file` path now resolved in Python via `get_package_share_directory` and passed directly to `controller_manager` node
-- Added `TimerAction(5s)` before loading controllers to ensure `controller_manager` is ready
-
-### v0.3.1 — Inertia fix (patch)
-- Recalculated all link inertia tensors from first principles (geometry + mass)
-- Fixed `shoulder_roll_link` ixx/iyy: `0.000010` → `0.000023` (was causing Gazebo Error Code 19 invalid inertia)
-- Fixed `base_link`, `upper_arm`, `forearm`, `wrist_link` minor inertia errors
-- All values now computed as solid primitives: cylinder `ixx = (1/12)m(3r²+h²)`, box `ixx = (1/12)m(y²+z²)`
-
-
-- Added `<ros2_control>` hardware interface block to URDF
-- Added `<gazebo>` material and friction tags to all links
-- Added `gz_ros2_control` plugin to URDF
-- Added `config/controllers.yaml` with `arm_controller` and `gripper_controller`
-- Added `worlds/arm_world.sdf` with ground plane, lighting, and target box
-- Added `launch/gazebo.launch.py` with controller load chain
-- Updated `CMakeLists.txt` to install `config/` and `worlds/`
-
-### v0.2 — Joint fixes
-- Added `shoulder_roll` joint (±45°, X axis) between `base_yaw` and `shoulder_pitch`
-- Added `shoulder_roll_link` hub link
-- Fixed finger curl axes — each finger now rotates inward toward wrist center
-  - `finger_1`: axis `0 1 0`
-  - `finger_2`: axis `0.866 0.5 0`
-  - `finger_3`: axis `0.866 -0.5 0`
-- Changed finger joint limits to `lower=-1.2217, upper=0.0` (negative = closed)
+### v0.2 — Joint additions
+- Added `shoulder_roll` joint (±45°)
+- Fixed finger curl axes, joint limits
 
 ### v0.1 — Initial URDF
-- 3-DOF arm: `base_yaw` (Z ±180°), `shoulder_pitch` (Y -90°/+135°), `elbow_pitch` (Y ±120°)
-- 3-finger gripper spaced 120° apart on wrist
-- `tool0` end-effector reference frame
-- RViz display launch file with `joint_state_publisher_gui`
-- Browser-based 3D visualizer (Three.js, no ROS required)
+- 3-DOF arm: `base_yaw`, `shoulder_pitch`, `elbow_pitch`
+- 3-finger gripper, `tool0` end-effector frame
+- RViz display launch

@@ -11,6 +11,7 @@ Pipeline:
 Publishes:
   /chess/vision/white_squares  — JSON list of squares with white pieces
   /chess/vision/debug_image    — annotated image
+  /chess/human_move            — detected human move in UCI format (e.g. "e2e4")
 
 Subscribes:
   /camera/image_raw
@@ -76,6 +77,9 @@ MARKER_BOARD = {
 }
 
 BOARD_SCALE = 100   # virtual pixels per square used for homography arithmetic
+MOVE_STABLE_FRAMES  = 15   # consecutive stable frames before publishing detected move
+MARKER_STABLE_FRAMES = 8   # frames ArUco centroid must be still → arm truly stopped
+MARKER_STABLE_THR    = 2.0 # max pixel drift per frame to be considered stable
 
 
 class ChessVisionNode(Node):
@@ -156,8 +160,27 @@ class ChessVisionNode(Node):
         self.create_subscription(String,     '/chess/last_move',    self._move_cb,   10)
         self.create_subscription(String,     '/chess/cmd',          self._cmd_cb,    10)
 
-        self.squares_pub = self.create_publisher(String, '/chess/vision/white_squares', 10)
-        self.debug_pub   = self.create_publisher(Image,  '/chess/vision/debug_image',   10)
+        # Human move monitoring — set up after arm idles, published once stable change detected
+        self._awaiting_human_move  = False
+        self._human_ref_sqs        = set()   # piece_sqs snapshot taken at start of human's turn
+        self._human_ref_gray       = {}      # brightness snapshot at start of human's turn
+        self._prev_occ_set         = None    # prev frame cur_occupied for stability tracking
+        self._move_stable_counter  = 0       # frames cur_occupied has been unchanged
+        self._reset_settle         = 0       # countdown frames after RESET before auto-snapshotting
+        self._wp_occupied          = set()   # last stable occupancy in WAIT_PIECES
+        self._wp_missing           = set()   # last stable missing set in WAIT_PIECES
+        self._diff_cache           = {}      # sq → diff value, frozen when arm/cam not still
+
+        # Marker stability — tracks ArUco centroid drift to detect arm truly stopped
+        self._prev_marker_ctr      = None    # (u, v) centroid of all 16 corners last frame
+        self._marker_stable_ct     = 0       # consecutive frames within MARKER_STABLE_THR
+        self._markers_stable       = False   # True when arm physically stationary
+        self._idle_stability_wait  = 0       # frames waited for stability after _arm_just_idled
+
+        self.squares_pub    = self.create_publisher(String, '/chess/vision/white_squares',  10)
+        self.debug_pub      = self.create_publisher(Image,  '/chess/vision/debug_image',    10)
+        self.human_move_pub = self.create_publisher(String, '/chess/human_move',             10)
+        self.centroids_pub  = self.create_publisher(String, '/chess/vision/piece_centroids', 10)
 
         self.get_logger().info('Chess vision node ready — searching for board')
 
@@ -180,6 +203,7 @@ class ChessVisionNode(Node):
             self.get_logger().info(
                 f'Arm idle — vision detection triggered  [state={self.state}]')
         elif not self.arm_idle and was_idle:
+            self._awaiting_human_move = False   # arm started moving — stop monitoring
             self.get_logger().info(f'Arm moving — vision paused  [state={self.state}]')
 
     def _move_cb(self, msg):
@@ -261,9 +285,17 @@ class ChessVisionNode(Node):
             self.piece_sqs     = set()
             self.changed_sqs   = set()
             self.board_history = []
+            self._awaiting_human_move = False
             if self.grid_centres and self.empty_ref:
                 self.state = self.TRACKING
-                self.get_logger().info('RESET — game reset, staying in TRACKING')
+                # Pieces are teleported back via Popen (no arm motion → no _arm_just_idled).
+                # Use a settle counter: after ~5s allow pieces to land, then auto-snapshot.
+                self._reset_settle        = 60   # ~5s at 12Hz
+                self._human_ref_sqs       = set()
+                self._human_ref_gray      = {}
+                self._prev_occ_set        = None
+                self._move_stable_counter = 0
+                self.get_logger().info('RESET — game reset, staying in TRACKING (settle 60 frames)')
             elif self.grid_centres:
                 self.state = self.WAIT_EMPTY
                 self.get_logger().info('RESET — game reset, back to WAIT_EMPTY (no empty ref)')
@@ -282,6 +314,9 @@ class ChessVisionNode(Node):
         img  = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8').copy()
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
+        # Track marker stability every frame — cheap, only needs raw ArUco corner positions
+        self._update_marker_stability(gray)
+
         self._overlay_edges(img, gray)
 
         if self.state == self.SEARCHING:
@@ -295,13 +330,17 @@ class ChessVisionNode(Node):
         elif self.state == self.CAPTURING_REF:
             self._draw_board_outline(img)
             self._draw_tile_grid(img)
-            if self.arm_idle:
+            if self.arm_idle and self._markers_stable:
                 self._accumulate_ref(gray, img)
             else:
                 h, w = img.shape[:2]
-                cv2.putText(img, 'Waiting for arm to stop...', (8, h - 14),
+                if not self.arm_idle:
+                    wait_msg = 'Waiting for arm to stop...'
+                else:
+                    wait_msg = f'Waiting for camera to stabilise  ({self._marker_stable_ct}/{MARKER_STABLE_FRAMES})'
+                cv2.putText(img, wait_msg, (8, h - 14),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0),       4)
-                cv2.putText(img, 'Waiting for arm to stop...', (8, h - 14),
+                cv2.putText(img, wait_msg, (8, h - 14),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.55, (100, 100, 255), 1)
 
         elif self.state == self.WAIT_PIECES:
@@ -321,15 +360,18 @@ class ChessVisionNode(Node):
     def _run_searching(self, img, gray):
         self._log_counter += 1
 
-        if not self.arm_idle:
-            msg = 'Waiting for arm/status IDLE...'
+        if not self.arm_idle or not self._markers_stable:
+            if not self.arm_idle:
+                msg = 'Waiting for arm IDLE...'
+            else:
+                msg = f'Waiting for camera to stabilise  ({self._marker_stable_ct}/{MARKER_STABLE_FRAMES})'
             cv2.putText(img, msg, (8, img.shape[0] - 14),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0),       4)
             cv2.putText(img, msg, (8, img.shape[0] - 14),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, (100, 100, 255), 1)
             return
 
-        # Try all detectors every idle frame until board is found
+        # Both arm idle and camera stationary — try board detection
         found, method = self._run_all_board_detectors(gray, img)
         if found:
             self._last_det_method = method
@@ -344,53 +386,115 @@ class ChessVisionNode(Node):
     def _run_tracking(self, img, gray):
         self._log_counter += 1
 
-        # All heavy vision work is gated on the arm-just-idled edge,
-        # so we never sample a blurred frame mid-motion.
+        # All heavy vision work is gated on arm-just-idled AND marker stability.
+        # _arm_just_idled fires on MOVING→IDLE but the arm may still be settling.
+        # We wait for the camera to confirm it is truly stationary (markers stable),
+        # but fall back after STABILITY_TIMEOUT frames so the game never gets stuck
+        # if Gazebo controller oscillation prevents perfect stability.
+        _STABILITY_TIMEOUT = 30   # frames at ~12 Hz
         if self._arm_just_idled:
-            self._arm_just_idled = False
+            self._idle_stability_wait += 1
+            _forced = self._idle_stability_wait >= _STABILITY_TIMEOUT
+            if not self._markers_stable and self._idle_stability_wait % 10 == 0:
+                self.get_logger().debug(
+                    f'[TRACKING] Waiting for camera stability: '
+                    f'{self._idle_stability_wait}/{_STABILITY_TIMEOUT}  '
+                    f'stable={self._markers_stable}')
 
-            # Refresh board grid with all available detectors
-            found, method = self._run_all_board_detectors(gray, img)
-            if found:
-                self._last_det_method = method
+            if self._markers_stable or _forced:
+                # Camera is stationary (or timeout reached) — take idle snapshot
+                if _forced and not self._markers_stable:
+                    self.get_logger().warn(
+                        f'[TRACKING] Camera never stabilised — taking idle snapshot anyway '
+                        f'(waited {self._idle_stability_wait} frames)')
+                self._arm_just_idled = False
+                self._idle_stability_wait = 0
 
-            if self.empty_ref:
-                # Piece detection: diff vs empty-board reference
-                self.piece_sqs = set()
-                for sq in self.grid_centres:
-                    cur   = self._sample_perspective(gray, sq)
-                    empty = self.empty_ref.get(sq)
-                    if empty is not None and abs(cur - empty) > self.piece_thr:
-                        self.piece_sqs.add(sq)
+                # Refresh board grid with all available detectors
+                found, method = self._run_all_board_detectors(gray, img)
+                if found:
+                    self._last_det_method = method
 
-                # Change detection: diff vs previous idle snapshot
-                self.changed_sqs = set()
-                for sq in self.grid_centres:
-                    prev = self.prev_idle_gray.get(sq)
-                    cur  = self._sample_perspective(gray, sq)
-                    if prev is not None and abs(cur - prev) > self.change_thr:
-                        self.changed_sqs.add(sq)
+                if self.empty_ref:
+                    # Piece detection: diff vs empty-board reference
+                    self.piece_sqs = set()
+                    for sq in self.grid_centres:
+                        cur   = self._sample_perspective(gray, sq)
+                        empty = self.empty_ref.get(sq)
+                        if empty is not None and abs(cur - empty) > self.piece_thr:
+                            self.piece_sqs.add(sq)
 
-                # Store idle snapshot for next diff
-                self.prev_idle_gray = {
-                    sq: self._sample_perspective(gray, sq)
-                    for sq in self.grid_centres
-                }
+                    # Change detection: diff vs previous idle snapshot
+                    self.changed_sqs = set()
+                    for sq in self.grid_centres:
+                        prev = self.prev_idle_gray.get(sq)
+                        cur  = self._sample_perspective(gray, sq)
+                        if prev is not None and abs(cur - prev) > self.change_thr:
+                            self.changed_sqs.add(sq)
 
-                # Record game history entry
-                self.board_history.append({
-                    'frame':   self._log_counter,
-                    'move':    self.last_move or '',
-                    'pieces':  set(self.piece_sqs),
-                    'changed': set(self.changed_sqs),
-                })
+                    # Store idle snapshot for next diff
+                    self.prev_idle_gray = {
+                        sq: self._sample_perspective(gray, sq)
+                        for sq in self.grid_centres
+                    }
 
+                    # Publish per-square world XY positions (tile centres for now)
+                    self._publish_piece_centroids()
+
+                    # Record game history entry
+                    self.board_history.append({
+                        'frame':   self._log_counter,
+                        'move':    self.last_move or '',
+                        'pieces':  set(self.piece_sqs),
+                        'changed': set(self.changed_sqs),
+                    })
+
+                    self.get_logger().info(
+                        f'[TRACKING] idle snap  grid={len(self.grid_centres)}  '
+                        f'pieces={len(self.piece_sqs)}  '
+                        f'changed={sorted(self.changed_sqs)}  '
+                        f'det={self._last_det_method}  '
+                        f'history={len(self.board_history)}')
+
+                    # Start monitoring for the human's response
+                    self._human_ref_sqs       = set(self.piece_sqs)
+                    self._human_ref_gray      = dict(self.prev_idle_gray)
+                    self._prev_occ_set        = None
+                    self._move_stable_counter = 0
+                    self._awaiting_human_move = True
+
+        # Post-RESET settle: pieces teleport back via Popen (no arm motion), so
+        # _arm_just_idled never fires.  Count down AND require marker stability,
+        # so we don't snapshot until Gazebo has finished all teleports.
+        if self._reset_settle > 0 and self.empty_ref:
+            self._reset_settle -= 1
+            if self._reset_settle % 10 == 0:
+                self.get_logger().debug(
+                    f'[TRACKING] Post-RESET settle: {self._reset_settle} frames remaining  '
+                    f'markers_stable={self._markers_stable}')
+            if self._reset_settle == 0 and not self._markers_stable:
                 self.get_logger().info(
-                    f'[TRACKING] idle snap  grid={len(self.grid_centres)}  '
-                    f'pieces={len(self.piece_sqs)}  '
-                    f'changed={sorted(self.changed_sqs)}  '
-                    f'det={self._last_det_method}  '
-                    f'history={len(self.board_history)}')
+                    '[TRACKING] Post-RESET: markers not yet stable — extending settle by 10 frames')
+                self._reset_settle = 10   # markers still moving — extend wait
+            if self._reset_settle == 0:
+                self._human_ref_sqs = {
+                    sq for sq in self.grid_centres
+                    if (self.empty_ref.get(sq) is not None and
+                        abs(self._sample_perspective(gray, sq) - self.empty_ref[sq]) > self.piece_thr)
+                }
+                self._human_ref_gray      = {sq: self._sample_perspective(gray, sq)
+                                             for sq in self.grid_centres}
+                self.piece_sqs            = set(self._human_ref_sqs)
+                self._prev_occ_set        = None
+                self._move_stable_counter = 0
+                self._awaiting_human_move = True
+                self.get_logger().info(
+                    f'[TRACKING] Post-RESET snapshot: {len(self._human_ref_sqs)} pieces '
+                    f'— awaiting human move')
+
+        # Per-frame human move monitoring — require BOTH arm idle AND camera stationary
+        if self.arm_idle and self._markers_stable and self._awaiting_human_move and self.empty_ref:
+            self._monitor_human_move(gray)
 
         self._draw_board_outline(img)
         self._draw_tile_grid(img)
@@ -516,7 +620,9 @@ class ChessVisionNode(Node):
             return False
 
         # Project all 64 square centres through H, then apply pixel nudge.
-        # bx = rank direction (0→rank1, 8*BS→rank8), by = file direction (0→a-file, 8*BS→h-file)
+        # bx = rank direction (bx=0 → rank8 in image, bx=8*BS → rank1 in image)
+        # by = file direction (by=0 → h-file in image, by=8*BS → a-file in image)
+        # Square name: FILES[7-fi] + str(8-ri)  (corrected for camera orientation)
         iw, ih = gray.shape[1], gray.shape[0]
         centres = {}
         for ri in range(8):
@@ -528,7 +634,7 @@ class ChessVisionNode(Node):
                 u = int(round(float(px[0]))) + self.grid_dx
                 v = int(round(float(px[1]))) + self.grid_dy
                 if 0 <= u < iw and 0 <= v < ih:
-                    centres[FILES[fi] + str(ri + 1)] = (u, v)
+                    centres[FILES[7 - fi] + str(8 - ri)] = (u, v)
 
         self.get_logger().info(
             f'ArUco: all 4 markers detected (16-pt LMEDS H)  in_frame={len(centres)}')
@@ -588,7 +694,7 @@ class ChessVisionNode(Node):
                 u = int(round(float(px[0]))) + self.grid_dx
                 v = int(round(float(px[1]))) + self.grid_dy
                 if 0 <= u < iw and 0 <= v < ih:
-                    centres[FILES[fi] + str(ri + 1)] = (u, v)
+                    centres[FILES[7 - fi] + str(8 - ri)] = (u, v)
         if len(centres) >= 4:
             self.homography   = H
             self.grid_centres = centres
@@ -819,26 +925,32 @@ class ChessVisionNode(Node):
     def _run_wait_pieces(self, img, gray):
         """Wait until all 32 starting squares are occupied.
 
-        Samples every frame (arm should be idle here — human placing pieces).
+        Samples only when arm is idle AND camera is stationary (human placing pieces).
         Once all STARTING_SQUARES show brightness diff > piece_thr vs empty_ref,
         take a prev_idle_gray snapshot and enter TRACKING.
         """
         self._draw_board_outline(img)
         self._draw_tile_grid(img)
 
-        # Compute which starting squares currently look occupied
-        occupied = set()
-        missing  = set()
-        for sq in STARTING_SQUARES:
-            if self.grid_centres.get(sq) is None:
-                missing.add(sq)
-                continue
-            cur   = self._sample_perspective(gray, sq)
-            empty = self.empty_ref.get(sq)
-            if empty is not None and abs(cur - empty) > self.piece_thr:
-                occupied.add(sq)
-            else:
-                missing.add(sq)
+        # Only sample when arm is idle AND camera is stationary — reuse last result otherwise
+        if self.arm_idle and self._markers_stable:
+            occupied = set()
+            missing  = set()
+            for sq in STARTING_SQUARES:
+                if self.grid_centres.get(sq) is None:
+                    missing.add(sq)
+                    continue
+                cur   = self._sample_perspective(gray, sq)
+                empty = self.empty_ref.get(sq)
+                if empty is not None and abs(cur - empty) > self.piece_thr:
+                    occupied.add(sq)
+                else:
+                    missing.add(sq)
+            self._wp_occupied = occupied
+            self._wp_missing  = missing
+        else:
+            occupied = self._wp_occupied
+            missing  = self._wp_missing
 
         h, w = img.shape[:2]
         r = self.sample_r + 10
@@ -882,7 +994,153 @@ class ChessVisionNode(Node):
             self.changed_sqs = set()
             self.board_history = []
             self.state = self.TRACKING
-            self.get_logger().info('All 32 pieces detected — entering TRACKING')
+            # Human plays first — start monitoring immediately
+            self._human_ref_sqs       = set(occupied)
+            self._human_ref_gray      = dict(self.prev_idle_gray)
+            self._prev_occ_set        = None
+            self._move_stable_counter = 0
+            self._awaiting_human_move = True
+            self.get_logger().info('All 32 pieces detected — entering TRACKING (awaiting human move)')
+
+    def _update_marker_stability(self, gray):
+        """Detect ArUco markers and track centroid drift to determine if arm is truly still.
+
+        Runs every frame once a homography exists.  Cheaper than a full homography
+        recompute — only needs the raw corner positions.  Updates:
+          _markers_stable   — True when centroid has drifted < MARKER_STABLE_THR px
+                              for MARKER_STABLE_FRAMES consecutive frames.
+          _marker_stable_ct — running counter of stable frames.
+        """
+        corners, ids, _ = cv2.aruco.detectMarkers(gray, ARUCO_DICT, parameters=ARUCO_PARAMS)
+
+        if ids is None or not {0, 1, 2, 3}.issubset({int(ids[i]) for i in range(len(ids))}):
+            # Lost sight of markers — reset stability (arm may be occluding them)
+            if self._markers_stable:
+                found_ids = sorted(int(ids[i]) for i in range(len(ids))) if ids is not None else []
+                self.get_logger().warn(
+                    f'[CAM] Markers lost (found {found_ids}) — stability reset')
+            self._marker_stable_ct = 0
+            self._markers_stable   = False
+            self._prev_marker_ctr  = None
+            return
+
+        id_map  = {int(ids[i]): corners[i][0] for i in range(len(ids))}
+        all_pts = np.concatenate([id_map[mid] for mid in range(4)], axis=0)
+        ctr     = np.mean(all_pts, axis=0)   # shape (2,)
+
+        prev_stable = self._markers_stable
+        if self._prev_marker_ctr is not None:
+            drift = float(np.linalg.norm(ctr - self._prev_marker_ctr))
+            if drift < MARKER_STABLE_THR:
+                self._marker_stable_ct = min(self._marker_stable_ct + 1,
+                                             MARKER_STABLE_FRAMES + 1)
+            else:
+                if self._marker_stable_ct > 0:
+                    self.get_logger().debug(
+                        f'[CAM] Drift {drift:.1f}px — stability counter reset '
+                        f'(was {self._marker_stable_ct})')
+                self._marker_stable_ct = 0
+
+        self._prev_marker_ctr = ctr
+        self._markers_stable  = self._marker_stable_ct >= MARKER_STABLE_FRAMES
+
+        # Log state transitions only
+        if self._markers_stable and not prev_stable:
+            self.get_logger().info(
+                f'[CAM] Markers stable — camera stationary  ctr=({ctr[0]:.1f},{ctr[1]:.1f})')
+        elif not self._markers_stable and prev_stable:
+            self.get_logger().info('[CAM] Markers moving — camera no longer stationary')
+
+    def _monitor_human_move(self, gray):
+        """Detect a stable piece movement since the human reference snapshot.
+
+        Called every frame while arm is idle and _awaiting_human_move is True.
+        Compares current board occupancy to _human_ref_sqs.  Once the change is
+        stable for MOVE_STABLE_FRAMES consecutive frames, classifies the move:
+
+          Simple move: 1 square disappeared + 1 new square appeared → from + to
+          Capture:     1 square disappeared + 0 new squares           → from + changed occupied
+
+        Publishes UCI string to /chess/human_move and clears _awaiting_human_move.
+        """
+        # Build current occupancy map
+        cur_occupied = set()
+        for sq in self.grid_centres:
+            cur  = self._sample_perspective(gray, sq)
+            empty = self.empty_ref.get(sq)
+            if empty is not None and abs(cur - empty) > self.piece_thr:
+                cur_occupied.add(sq)
+
+        # Stability tracking — reset counter on any change in occupied set
+        if cur_occupied == self._prev_occ_set:
+            self._move_stable_counter += 1
+        else:
+            if self._prev_occ_set is not None:
+                changed = (cur_occupied ^ self._prev_occ_set)
+                self.get_logger().debug(
+                    f'[MONITOR] Occupancy changed — reset stability  '
+                    f'delta={sorted(changed)}  occ={len(cur_occupied)}')
+            self._prev_occ_set        = set(cur_occupied)
+            self._move_stable_counter = 0
+            return
+
+        if self._move_stable_counter < MOVE_STABLE_FRAMES:
+            return
+
+        # Board is stable — check if it actually changed vs reference
+        if cur_occupied == self._human_ref_sqs:
+            return   # no change yet
+
+        disappeared = self._human_ref_sqs - cur_occupied   # pieces that moved away
+        appeared    = cur_occupied - self._human_ref_sqs   # pieces on previously empty squares
+
+        self.get_logger().info(
+            f'[MONITOR] Stable board change after {self._move_stable_counter} frames  '
+            f'disappeared={sorted(disappeared)}  appeared={sorted(appeared)}')
+
+        uci = None
+
+        if len(disappeared) == 1 and len(appeared) == 1:
+            # Simple move — piece lifted from one square, placed on another empty square
+            uci = next(iter(disappeared)) + next(iter(appeared))
+
+        elif len(disappeared) == 1 and len(appeared) == 0:
+            # Possible capture — to_sq was already occupied; look for a brightness change
+            # on a square that was in reference (still shows occupied but different piece)
+            from_sq = next(iter(disappeared))
+            changed_occupied = set()
+            for sq in (self._human_ref_sqs - disappeared):
+                cur  = self._sample_perspective(gray, sq)
+                ref  = self._human_ref_gray.get(sq)
+                if ref is not None and abs(cur - ref) > self.change_thr:
+                    changed_occupied.add(sq)
+            self.get_logger().info(
+                f'[MONITOR] Capture candidate: from={from_sq}  '
+                f'changed_occupied={sorted(changed_occupied)}')
+            if len(changed_occupied) == 1:
+                uci = from_sq + next(iter(changed_occupied))
+            elif len(changed_occupied) == 0:
+                self.get_logger().warn(
+                    f'[MONITOR] Capture detection failed — no brightness change found '
+                    f'on remaining occupied squares (change_thr={self.change_thr:.0f})')
+            else:
+                self.get_logger().warn(
+                    f'[MONITOR] Ambiguous capture — {len(changed_occupied)} changed squares: '
+                    f'{sorted(changed_occupied)}')
+        else:
+            self.get_logger().warn(
+                f'[MONITOR] Unclassified board change — '
+                f'disappeared={sorted(disappeared)} appeared={sorted(appeared)} '
+                f'(expected 1+1 or 1+0)')
+
+        if uci:
+            self.get_logger().info(f'[MONITOR] Publishing human move: {uci}')
+            msg = String()
+            msg.data = uci
+            self.human_move_pub.publish(msg)
+            self._awaiting_human_move = False
+            # Update piece_sqs to reflect new state immediately
+            self.piece_sqs = set(cur_occupied)
 
     def _sample(self, gray, uv) -> float:
         u, v = uv
@@ -915,8 +1173,8 @@ class ChessVisionNode(Node):
         # Project the 4 corners of this tile through H, apply pixel nudge
         src = []
         for dfi, dri in [(0, 0), (1, 0), (1, 1), (0, 1)]:
-            bx = (ri + dri) * BOARD_SCALE   # rank → bx
-            by = (fi + dfi) * BOARD_SCALE   # file → by
+            bx = (7 - ri + dri) * BOARD_SCALE   # flipped rank
+            by = (7 - fi + dfi) * BOARD_SCALE   # flipped file
             pt = np.array([[[bx, by]]], dtype=np.float32)
             px = cv2.perspectiveTransform(pt, H)[0][0]
             src.append([float(px[0]) + self.grid_dx,
@@ -938,6 +1196,38 @@ class ChessVisionNode(Node):
         inner  = warped[margin:SZ - margin, margin:SZ - margin]
         return float(np.mean(inner)) if inner.size > 0 else 0.0
 
+    # ── Piece centroid computation ─────────────────────────────────────────────
+
+    def _compute_piece_centroids(self) -> dict:
+        """Return world XY for each occupied square.
+
+        Currently: tile centre (square_to_xyz equivalent).
+        TODO: back-project camera brightness-weighted centroid for sub-tile accuracy.
+        """
+        result = {}
+        for sq in self.piece_sqs:
+            fi = FILES.index(sq[0])
+            ri = int(sq[1]) - 1   # rank 1 → 0
+            # Tile centre in world coords (mirrors chess_arm_node.square_to_xyz, no flip)
+            world_x = self.ox + (ri + 0.5) * self.sq
+            world_y = self.oy + (fi + 0.5) * self.sq
+            result[sq] = (round(world_x, 4), round(world_y, 4))
+        return result
+
+    def _publish_piece_centroids(self):
+        """Publish per-square world XY centroids for all occupied squares."""
+        if not self.arm_idle or not self._markers_stable:
+            return
+        centroids = self._compute_piece_centroids()
+        if not centroids:
+            return
+        msg = String()
+        msg.data = json.dumps(centroids)
+        self.centroids_pub.publish(msg)
+        self.get_logger().info(
+            f'[CENTROIDS] published {len(centroids)} tile-centre positions  '
+            f'sq_list={sorted(centroids.keys())}')
+
     # ── Debug drawing layers ───────────────────────────────────────────────────
 
     def _draw_diff_overlay(self, img, gray):
@@ -949,20 +1239,37 @@ class ChessVisionNode(Node):
           > 1.0×thr       → green       (clearly occupied)
 
         Always visible in WAIT_PIECES. In TRACKING requires debug_diff=True.
+
+        Sampling is gated on arm_idle AND _markers_stable — the cache is frozen
+        while the arm is moving or the camera is still settling, so the overlay
+        always shows the last known stable values rather than noisy in-motion data.
         """
         if not self.empty_ref:
             return
+
+        # Recompute only when arm is idle and camera is stationary
+        if self.arm_idle and self._markers_stable:
+            new_cache = {}
+            for sq in self.grid_centres:
+                ref = self.empty_ref.get(sq)
+                if ref is None:
+                    continue
+                cur = self._sample_perspective(gray, sq)
+                new_cache[sq] = abs(cur - ref)
+            self._diff_cache = new_cache
+
+        if not self._diff_cache:
+            return
+
         h, w = img.shape[:2]
         thr = self.piece_thr
         for sq, uv in self.grid_centres.items():
             u, v = uv
             if not (0 <= u < w and 0 <= v < h):
                 continue
-            cur  = self._sample_perspective(gray, sq)
-            ref  = self.empty_ref.get(sq)
-            if ref is None:
+            diff = self._diff_cache.get(sq)
+            if diff is None:
                 continue
-            diff = abs(cur - ref)
             if diff < 0.5 * thr:
                 color = (90, 90, 90)      # gray — empty
             elif diff < thr:
@@ -1165,10 +1472,11 @@ class ChessVisionNode(Node):
 
         det = f'  det={self._last_det_method}' if self._last_det_method else ''
         arm = '  ARM:IDLE' if self.arm_idle else '  ARM:MOVING'
+        stable = '  CAM:STILL' if self._markers_stable else f'  CAM:DRIFT({self._marker_stable_ct}/{MARKER_STABLE_FRAMES})'
         thr = ''
         if self.state in (self.WAIT_PIECES, self.TRACKING):
             thr = f'  thr={self.piece_thr:.0f}/{self.change_thr:.0f}'
-        label = f'{self.state}   grid={len(self.grid_centres)}{extra}{det}{thr}{arm}'
+        label = f'{self.state}   grid={len(self.grid_centres)}{extra}{det}{thr}{arm}{stable}'
         cv2.putText(img, label, (8, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 0),   6)
         cv2.putText(img, label, (8, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.75, state_color, 2)
 
@@ -1181,6 +1489,12 @@ class ChessVisionNode(Node):
                             cv2.FONT_HERSHEY_SIMPLEX, 1.1, (0,   0,   0),   8)
                 cv2.putText(img, label2, (cx - 190, cy),
                             cv2.FONT_HERSHEY_SIMPLEX, 1.1, (100, 100, 255), 3)
+            elif not self._markers_stable:
+                label2 = f'CAMERA SETTLING  {self._marker_stable_ct}/{MARKER_STABLE_FRAMES}'
+                cv2.putText(img, label2, (cx - 200, cy),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0,   0,   0),   8)
+                cv2.putText(img, label2, (cx - 200, cy),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.0, (100, 200, 255), 3)
             else:
                 cv2.putText(img, 'BOARD NOT FOUND', (cx - 160, cy),
                             cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0,  0, 0), 8)
