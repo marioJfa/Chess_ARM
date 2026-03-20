@@ -193,6 +193,17 @@ ros2 topic pub --once /chess/cmd std_msgs/msg/String "data: 'RECAL'"
 
 ## Changelog
 
+### v0.4.8 — Sim / real hardware separation
+- **`chess_real.launch.py`** (new): real-hardware launch — no Gazebo, no `ros_gz_bridge`,
+  no `spawn_robot`; starts `robot_state_publisher`, `ros2_control_node` (hardware interface),
+  controllers, and all chess nodes with `use_sim_time: false`
+- **`chess_arm_node.py` `use_sim` parameter**: all `gz service` subprocess calls
+  (`_teleport`, `_teleport_to_graveyard`, `_reset_all_pieces`, `_remove_all_pieces`,
+  `_return_pieces_to_board`) are gated on `use_sim=True`; logs `[SIM]` prefix when
+  teleporting, skip message when `use_sim=False`
+- **`chess.launch.py`**: explicitly passes `{'use_sim': True}` to `chess_arm_node` —
+  behaviour unchanged for simulation
+
 ### v0.4.7 — Vision-driven move detection + camera stability gate + bug fixes
 - **Vision-driven human move detection**: camera now detects when a human moves a piece
   and publishes to `/chess/human_move` automatically — no GUI click needed

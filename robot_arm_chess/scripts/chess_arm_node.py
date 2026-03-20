@@ -3,7 +3,7 @@
 chess_arm_node.py
 Converts chess moves (UCI format) into pick-and-place arm trajectories.
 Uses analytical IK to send goals to arm_controller.
-Teleports Gazebo piece models via gz service to match arm motion.
+Teleports Gazebo piece models via gz service when use_sim=True.
 
 Subscribes:
   /chess/engine_move   (std_msgs/String) — arm's move in UCI (e.g. e7e5)
@@ -14,6 +14,10 @@ Subscribes:
 Publishes:
   /chess/arm_move      (std_msgs/String) — confirms move executed
   /chess/arm_status    (std_msgs/String) — IDLE / MOVING / DONE / ERROR
+
+Parameters:
+  use_sim (bool, default True) — when True, teleports Gazebo models via gz service;
+                                  when False, skips all gz calls (real hardware mode)
 """
 
 import json
@@ -50,6 +54,14 @@ class ChessArmNode(Node):
 
     def __init__(self):
         super().__init__('chess_arm_node')
+
+        # Sim vs real hardware
+        self.declare_parameter('use_sim', True)
+        self.use_sim = self.get_parameter('use_sim').value
+        if self.use_sim:
+            self.get_logger().info('[SIM] Simulation mode — Gazebo teleports enabled')
+        else:
+            self.get_logger().info('[REAL] Real-hardware mode — Gazebo teleports disabled')
 
         # Board geometry params
         self.declare_parameter('origin_x',      0.20)
@@ -205,23 +217,31 @@ class ChessArmNode(Node):
         self._wait_for_arm_stop()
 
     def _reset_all_pieces(self):
-        """Teleport all 32 pieces back to their starting squares and reset game state.
+        """Reset game state and (in sim) teleport all 32 pieces to starting squares.
         Always uses flip=True so white pieces land at the far end from the arm (ranks 7-8
         in physical space) and black pieces near the arm, independent of board_flip."""
         self._init_piece_map()          # rebuild map to starting configuration
-        for sq_name, model in self._piece_map.items():
-            sq = chess.parse_square(sq_name)
-            x, y, _ = self.square_to_xyz(sq, flip=True)
-            self._teleport(model, x, y, self._piece_z(model))
+        if self.use_sim:
+            for sq_name, model in self._piece_map.items():
+                sq = chess.parse_square(sq_name)
+                x, y, _ = self.square_to_xyz(sq, flip=True)
+                self._teleport(model, x, y, self._piece_z(model))
+            self.get_logger().info('[SIM] Teleported all 32 pieces to starting positions')
+        else:
+            self.get_logger().info('[REAL] Game reset — piece teleport skipped (real-hardware mode)')
         self.board = chess.Board()
         self._grave_idx = 0
         self._pending_gui_moves.clear()
         self.busy = False
         self.publish_status('IDLE')
-        self.get_logger().info('[RESET] All pieces reset to starting positions')
+        self.get_logger().info('[RESET] Game state reset to starting position')
 
     def _remove_all_pieces(self):
-        """Teleport all 32 pieces off-board for vision calibration."""
+        """(Sim only) Teleport all 32 pieces off-board for vision calibration."""
+        if not self.use_sim:
+            self.get_logger().info(
+                '[REAL] REMOVE_PIECES skipped — no Gazebo in real-hardware mode')
+            return
         files = 'abcdefgh'
         back  = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r']
         models = []
@@ -236,20 +256,30 @@ class ChessArmNode(Node):
             x = self.ox + (idx % 16) * 0.045
             y = self.oy - 0.15 - (idx // 16) * 0.06
             self._teleport(model, x, y, 0.05)
-        self.get_logger().info(f'Removed {len(models)} pieces for vision calibration')
+        self.get_logger().info(f'[SIM] Removed {len(models)} pieces for vision calibration')
 
     def _return_pieces_to_board(self):
-        """Teleport each tracked piece back to its current square (no game reset)."""
+        """(Sim only) Teleport each tracked piece back to its current square (no game reset)."""
+        if not self.use_sim:
+            self.get_logger().info(
+                '[REAL] RETURN_PIECES skipped — no Gazebo in real-hardware mode')
+            return
         count = 0
         for sq_name, model in self._piece_map.items():
             sq = chess.parse_square(sq_name)
             x, y, _ = self.square_to_xyz(sq)
             self._teleport(model, x, y, self._piece_z(model))
             count += 1
-        self.get_logger().info(f'Returned {count} pieces to current board positions')
+        self.get_logger().info(f'[SIM] Returned {count} pieces to current board positions')
 
     def _teleport(self, model_name, x, y, z):
-        """Move a Gazebo model to (x, y, z) via gz service."""
+        """Move a Gazebo model to (x, y, z) via gz service (sim only)."""
+        if not self.use_sim:
+            self.get_logger().debug(
+                f'[SIM] Teleport skipped (real-hardware mode): {model_name}')
+            return
+        self.get_logger().debug(
+            f'[SIM] Teleporting {model_name} → ({x:.4f}, {y:.4f}, {z:.4f})')
         req = (f'name: "{model_name}", '
                f'position: {{x: {x:.4f}, y: {y:.4f}, z: {z:.4f}}}, '
                f'orientation: {{x: 0, y: 0, z: 0, w: 1}}')
@@ -261,7 +291,11 @@ class ChessArmNode(Node):
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def _teleport_to_graveyard(self, model_name):
-        """Move a captured piece off the board."""
+        """Move a captured piece off the board (sim only)."""
+        if not self.use_sim:
+            self.get_logger().debug(
+                f'[SIM] Graveyard teleport skipped (real-hardware mode): {model_name}')
+            return
         idx = self._grave_idx
         self._grave_idx += 1
         col = idx % 8
@@ -270,6 +304,7 @@ class ChessArmNode(Node):
         x = self.ox + col * self.sq
         y = self.oy + 8 * self.sq + 0.06 + row * 0.045
         self._teleport(model_name, x, y, self._piece_z(model_name))
+        self.get_logger().debug(f'[SIM] {model_name} → graveyard slot {idx}')
 
     def _piece_z(self, model_name):
         """Return correct z for a piece model sitting on the board."""

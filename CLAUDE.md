@@ -115,12 +115,13 @@ robot_arm_chess/
   config/chess_params.yaml         # stockfish depth=10, arm plays black
   scripts/board_state_node.py      # /chess/board_state (FEN), /chess/last_move
   scripts/chess_engine_node.py     # /chess/engine_move (UCI)
-  scripts/chess_arm_node.py        # /chess/arm_move, /chess/arm_status  (v0.4.7 — capture fix, logging)
+  scripts/chess_arm_node.py        # /chess/arm_move, /chess/arm_status  (v0.4.8 — use_sim param, gz guards)
   scripts/chess_vision_node.py     # ArUco homography, piece tracking, human move detection  (v0.4.7)
   scripts/chess_gui.py             # tkinter, click squares or type UCI, /chess/human_move
   scripts/vision_calib_gui.py      # ArmTunerGUI — 6-tab live param tuning GUI
   worlds/chess_world.sdf           # board + 32 cylinder pieces, sensors plugin included
-  launch/chess.launch.py           # full system: gazebo + controllers + chess nodes
+  launch/chess.launch.py           # simulation: gazebo + bridge + controllers + chess nodes  (v0.4.8)
+  launch/chess_real.launch.py      # real hardware: ros2_control + controllers + chess nodes  (v0.4.8 new)
 ```
 
 ## Topics
@@ -193,8 +194,9 @@ ros2 action list
 - [ ] Fusion 360 STL meshes for arm links (`robot_arm_description/meshes/`)
 - [x] Vision pipeline: camera detects human moves via ArUco+homography (v0.4.6/0.4.7)
 - [x] Vision-driven move detection — arm waits for camera stability before sampling (v0.4.7)
+- [x] Sim / real hardware separation — `use_sim` param + `chess_real.launch.py` (v0.4.8)
 
-## Chess Scripts — Key Behaviours (v0.4.7)
+## Chess Scripts — Key Behaviours (v0.4.8)
 - `chess_vision_node.py` — all detection gated on `arm_idle AND _markers_stable`
   (ArUco centroid drift < 2px for 8 frames = camera truly still)
 - `chess_vision_node.py` — publishes `/chess/human_move` automatically when stable piece
@@ -202,3 +204,5 @@ ros2 action list
 - `chess_arm_node.py` — `human_move_cb` fetches `cap_model` and `moving_model` before
   any teleport; `cap_model != moving_model` guard prevents double-graveyard bug
 - `_init_piece_map()` clears dict before rebuild — prevents stale entries across game resets
+- `chess_arm_node.py` `use_sim` param (default True) — all `gz service` calls gated; set False in `chess_real.launch.py`
+- `chess_real.launch.py` — real-hardware launch: no Gazebo/bridge/spawner; `ros2_control_node` + controllers + chess nodes with `use_sim_time: false`
