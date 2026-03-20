@@ -17,6 +17,8 @@ Publishes:
 """
 
 import json
+import os
+import sys
 
 import rclpy
 from rclpy.node import Node
@@ -30,22 +32,14 @@ import threading
 import time
 import subprocess
 
+# ── Import analytical_ik from robot_arm_moveit ───────────────────────────────
+sys.path.insert(0, os.path.normpath(
+    os.path.join(os.path.dirname(__file__), '..', '..', '..', 'robot_arm_moveit', 'lib', 'robot_arm_moveit')))
+from arm_ik import analytical_ik, forward_kinematics  # noqa: E402
 
-# ── Arm geometry (must match URDF) ────────────────────────────────────────────
-L1 = 0.04    # base → shoulder_roll
-L2 = 0.20    # upper arm
-L3 = 0.18    # forearm
-L4 = 0.11    # wrist → tool0
 
-ARM_JOINTS = ['base_yaw', 'shoulder_roll', 'shoulder_pitch', 'elbow_pitch']
+ARM_JOINTS     = ['base_yaw', 'shoulder_roll', 'shoulder_pitch', 'elbow_pitch']
 GRIPPER_JOINTS = ['finger_1_joint', 'finger_2_joint', 'finger_3_joint']
-
-JOINT_LIMITS = {
-    'base_yaw':       (-math.pi,   math.pi),
-    'shoulder_roll':  (-0.7854,    0.7854),
-    'shoulder_pitch': (-1.5708,    2.3562),
-    'elbow_pitch':    (-2.0944,    2.0944),
-}
 
 # Piece z-center above ground when sitting on the board (board top = 0.02)
 PIECE_Z  = 0.038   # back-rank pieces (cylinder length 0.035)
@@ -69,7 +63,7 @@ class ChessArmNode(Node):
         self.declare_parameter('grasp_x_offset',     0.0)    # world-frame XY nudge at grasp step
         self.declare_parameter('grasp_y_offset',     0.0)
         self.declare_parameter('lift_height',        0.20)
-        self.declare_parameter('hover_height',        0.12)
+        self.declare_parameter('hover_height',       0.12)
         self.declare_parameter('gripper_open',       0.0)
         self.declare_parameter('gripper_closed',     1.05)
         self.declare_parameter('move_duration',      2.5)
@@ -192,7 +186,8 @@ class ChessArmNode(Node):
         if cmd == 'RESET':
             self._reset_all_pieces()
         elif cmd == 'RECAL':
-            # Calibration: remove pieces so vision can capture a clean empty-board reference
+            # Full reset first so game state matches visuals after calibration
+            self._reset_all_pieces()
             self._remove_all_pieces()
         elif cmd == 'REMOVE_PIECES':
             self._remove_all_pieces()
@@ -210,30 +205,20 @@ class ChessArmNode(Node):
         self._wait_for_arm_stop()
 
     def _reset_all_pieces(self):
-        """Teleport all 32 pieces back to their starting squares."""
-        files = 'abcdefgh'
-        back  = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r']
-        for i, p in enumerate(back):
-            sq = chess.square(i, 0)
-            x, y, _ = self.square_to_xyz(sq)
-            self._teleport(f'wp_{p}{files[i]}1', x, y, PIECE_Z)
-            sq = chess.square(i, 7)
-            x, y, _ = self.square_to_xyz(sq)
-            self._teleport(f'bp_{p}{files[i]}8', x, y, PIECE_Z)
-        for i in range(8):
-            sq = chess.square(i, 1)
-            x, y, _ = self.square_to_xyz(sq)
-            self._teleport(f'wp_p{files[i]}2', x, y, PAWN_Z)
-            sq = chess.square(i, 6)
-            x, y, _ = self.square_to_xyz(sq)
-            self._teleport(f'bp_p{files[i]}7', x, y, PAWN_Z)
+        """Teleport all 32 pieces back to their starting squares and reset game state.
+        Always uses flip=True so white pieces land at the far end from the arm (ranks 7-8
+        in physical space) and black pieces near the arm, independent of board_flip."""
+        self._init_piece_map()          # rebuild map to starting configuration
+        for sq_name, model in self._piece_map.items():
+            sq = chess.parse_square(sq_name)
+            x, y, _ = self.square_to_xyz(sq, flip=True)
+            self._teleport(model, x, y, self._piece_z(model))
         self.board = chess.Board()
         self._grave_idx = 0
         self._pending_gui_moves.clear()
-        self._init_piece_map()
         self.busy = False
         self.publish_status('IDLE')
-        self.get_logger().info('All pieces reset to starting positions')
+        self.get_logger().info('[RESET] All pieces reset to starting positions')
 
     def _remove_all_pieces(self):
         """Teleport all 32 pieces off-board for vision calibration."""
@@ -331,10 +316,14 @@ class ChessArmNode(Node):
         self.get_logger().warn('_wait_for_arm_stop: timeout — publishing IDLE anyway')
 
     # ── Board geometry ─────────────────────────────────────────────────────────
-    def square_to_xyz(self, square: chess.Square, z_offset: float = 0.0):
+    def square_to_xyz(self, square: chess.Square, z_offset: float = 0.0, flip: bool = None):
+        """Convert a chess square to world XYZ.
+        flip overrides self.board_flip when explicitly set (used by reset to
+        place pieces at their physical home squares regardless of arm orientation)."""
         file = chess.square_file(square)
         rank = chess.square_rank(square)
-        if self.board_flip:
+        do_flip = self.board_flip if flip is None else flip
+        if do_flip:
             x = self.ox + (7 - rank) * self.sq + self.sq / 2
             y = self.oy + (7 - file) * self.sq + self.sq / 2
         else:
@@ -342,42 +331,6 @@ class ChessArmNode(Node):
             y = self.oy + file * self.sq + self.sq / 2
         z = self.oz + z_offset
         return x, y, z
-
-    # ── IK solver ─────────────────────────────────────────────────────────────
-    def analytical_ik(self, x, y, z):
-        base_yaw = math.atan2(y, x)
-        r = math.sqrt(x**2 + y**2)
-        shoulder_z = 0.06 + L1
-        z_eff = z - shoulder_z
-        D = math.sqrt(r**2 + z_eff**2)
-
-        reach_max = L2 + L3 + L4
-        if D > reach_max:
-            self.get_logger().warn(
-                f'Target unreachable: {D:.3f}m > {reach_max:.3f}m, clamping')
-            D = reach_max * 0.95
-
-        L34 = L3 + L4
-        cos_elbow = (L2**2 + L34**2 - D**2) / (2 * L2 * L34)
-        cos_elbow = max(-1.0, min(1.0, cos_elbow))
-        elbow_pitch = math.pi - math.acos(cos_elbow)
-
-        alpha = math.atan2(z_eff, r)
-        cos_beta = (L2**2 + D**2 - L34**2) / (2 * L2 * D)
-        cos_beta = max(-1.0, min(1.0, cos_beta))
-        beta = math.acos(cos_beta)
-        shoulder_total = alpha + beta
-
-        solution = {
-            'base_yaw':       base_yaw,
-            'shoulder_roll':  shoulder_total * 0.4,
-            'shoulder_pitch': shoulder_total * 0.6,
-            'elbow_pitch':    elbow_pitch,
-        }
-        for j, v in solution.items():
-            lo, hi = JOINT_LIMITS[j]
-            solution[j] = max(lo, min(hi, v))
-        return solution
 
     # ── Trajectory helpers ────────────────────────────────────────────────────
     def send_arm(self, solution: dict, duration: float = None):
@@ -404,7 +357,10 @@ class ChessArmNode(Node):
         time.sleep(duration + 0.2)
 
     def move_to_xyz(self, x, y, z, duration=None):
-        sol = self.analytical_ik(x, y, z)
+        sol = analytical_ik(x, y, z)
+        if sol is None:
+            self.get_logger().warn(f'[IK] No solution for ({x:.3f},{y:.3f},{z:.3f}) — skipping')
+            return
         self.send_arm(sol, duration)
 
     # ── Pick and place ────────────────────────────────────────────────────────

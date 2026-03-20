@@ -55,6 +55,7 @@ class ChessGUI(Node):
         self.arm_status = 'IDLE'
         self.game_status = 'ONGOING'
         self.last_arm_move = None
+        self.mirror_files = False   # flip a-h → h-a (debug param)
 
         # Publishers
         self.human_pub = self.create_publisher(String, '/chess/gui_move', 10)
@@ -120,6 +121,13 @@ class ChessGUI(Node):
         game_frame.pack(pady=(4, 1))
         tk.Label(game_frame, text='Game:', bg='#1a1a2e', fg='#8b949e',
                  font=('Courier', 8)).pack(side='left', padx=(0, 4))
+        self._mirror_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(game_frame, text='Mirror a↔h',
+                       variable=self._mirror_var,
+                       bg='#1a1a2e', fg='#8b949e', selectcolor='#21262d',
+                       activebackground='#1a1a2e', activeforeground='#58a6ff',
+                       font=('Courier', 8),
+                       command=self._toggle_mirror).pack(side='left', padx=(0, 8))
         tk.Button(game_frame, text='Reset Game',
                   command=self._reset_game,
                   bg='#5a1a1a', fg='white', font=('Courier', 9),
@@ -160,7 +168,8 @@ class ChessGUI(Node):
 
         for rank in range(7, -1, -1):
             for file in range(8):
-                x1 = file * sq_size
+                draw_file = (7 - file) if self.mirror_files else file
+                x1 = draw_file * sq_size
                 y1 = (7 - rank) * sq_size
                 x2 = x1 + sq_size
                 y2 = y1 + sq_size
@@ -188,8 +197,9 @@ class ChessGUI(Node):
 
         # File labels
         for file in range(8):
+            draw_file = (7 - file) if self.mirror_files else file
             self.canvas.create_text(
-                file * sq_size + sq_size // 2, 395,
+                draw_file * sq_size + sq_size // 2, 395,
                 text=chess.FILE_NAMES[file],
                 fill='#8b949e', font=('Courier', 8))
 
@@ -197,7 +207,8 @@ class ChessGUI(Node):
         if self.board.turn != chess.WHITE:
             return
         sq_size = 50
-        file = event.x // sq_size
+        col  = event.x // sq_size
+        file = (7 - col) if self.mirror_files else col
         rank = 7 - (event.y // sq_size)
         if not (0 <= file <= 7 and 0 <= rank <= 7):
             return
@@ -238,6 +249,10 @@ class ChessGUI(Node):
                 self._log(f'Illegal: {uci}')
         except ValueError:
             self._log(f'Invalid: {uci}')
+
+    def _toggle_mirror(self):
+        self.mirror_files = self._mirror_var.get()
+        self._draw_board()
 
     def _reset_game(self):
         msg = String()

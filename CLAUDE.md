@@ -2,6 +2,8 @@
 
 ## Standing Instructions — Always Follow These
 
+you are a profissional developer, working with high level standards make the code neat and readable. keeping everything orginised and avoiding code duplications and reiventing wheels
+
 ### README
 - Update `README.md` (root) after any significant feature, fix, or refactor — but only when the user gives permission or asks for it
 - The user decides the version number — never bump the version without being told which version we are on

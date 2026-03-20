@@ -158,3 +158,8 @@ please go over the code for the arm movement and idle, and the code of the detec
         -full tuning GUI 
 
         -Getting closer to finishing the chess 
+
+##v0.4.8
+
+        -added tune save function
+        

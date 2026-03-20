@@ -10,6 +10,12 @@ Launches the full chess system:
   - chess_engine_node
   - chess_arm_node
   - chess_gui
+  - chess_vision_node
+
+Debug tools (launch manually):
+  ros2 run robot_arm_chess chess_gui.py
+  ros2 run rqt_image_view rqt_image_view /chess/vision/debug_image
+  ros2 run robot_arm_chess vision_calib_gui.py
 """
 
 import os

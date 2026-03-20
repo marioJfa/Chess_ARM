@@ -99,6 +99,7 @@ class ChessVisionNode(Node):
         self.declare_parameter('origin_y',         -0.175)
         self.declare_parameter('origin_z',          0.02)
         self.declare_parameter('square_size',       0.045)
+        self.declare_parameter('board_flip',        False)
         self.declare_parameter('sample_radius',       10)
         self.declare_parameter('change_threshold',    18.0)
         self.declare_parameter('piece_threshold',     22.0)
@@ -112,6 +113,7 @@ class ChessVisionNode(Node):
         self.oy               = self.get_parameter('origin_y').value
         self.oz               = self.get_parameter('origin_z').value
         self.sq               = self.get_parameter('square_size').value
+        self.board_flip       = self.get_parameter('board_flip').value
         self.sample_r         = self.get_parameter('sample_radius').value
         self.change_thr       = self.get_parameter('change_threshold').value
         self.piece_thr        = self.get_parameter('piece_threshold').value
@@ -1208,9 +1210,13 @@ class ChessVisionNode(Node):
         for sq in self.piece_sqs:
             fi = FILES.index(sq[0])
             ri = int(sq[1]) - 1   # rank 1 → 0
-            # Tile centre in world coords (mirrors chess_arm_node.square_to_xyz, no flip)
-            world_x = self.ox + (ri + 0.5) * self.sq
-            world_y = self.oy + (fi + 0.5) * self.sq
+            # Tile centre in world coords — mirrors chess_arm_node.square_to_xyz
+            if self.board_flip:
+                world_x = self.ox + (7 - ri + 0.5) * self.sq
+                world_y = self.oy + (7 - fi + 0.5) * self.sq
+            else:
+                world_x = self.ox + (ri + 0.5) * self.sq
+                world_y = self.oy + (fi + 0.5) * self.sq
             result[sq] = (round(world_x, 4), round(world_y, 4))
         return result
 

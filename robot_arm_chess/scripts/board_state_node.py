@@ -9,7 +9,7 @@ Publishes:
   /chess/last_move    (std_msgs/String) — last move in UCI format (e.g. e2e4)
 
 Subscribes:
-  /chess/human_move   (std_msgs/String) — human move in UCI format
+  /chess/human_move   (std_msgs/String) — vision-confirmed human move in UCI format
   /chess/arm_move     (std_msgs/String) — arm move in UCI format
 """
 
