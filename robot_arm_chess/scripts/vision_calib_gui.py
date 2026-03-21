@@ -48,8 +48,9 @@ _arm_ik_mod   = _import_arm_ik()
 analytical_ik = _arm_ik_mod.analytical_ik
 
 # ── Node names ────────────────────────────────────────────────────────────────
-VISION_NODE = '/chess_vision_node'
-ARM_NODE    = '/chess_arm_node'
+VISION_NODE   = '/chess_vision_node'
+ARM_NODE      = '/chess_arm_node'
+CALIB_NODE    = '/chess_coord_calibrator'
 
 # ── Colour palette ────────────────────────────────────────────────────────────
 BG      = '#0d1117'
@@ -111,6 +112,17 @@ STANDBY_SLIDERS = [
     ('standby_elbow_pitch',    'Elbow pitch  (rad)',     -2.09, 2.09, 0.01,  0.28,  'float', ARM_NODE),
 ]
 
+CALIBRATOR_SLIDERS = [
+    # Camera-on-wrist offset
+    ('cam_offset_x',        'Camera offset X  (m)',      -0.1,  0.2,  0.002, 0.04, 'float', CALIB_NODE),
+    ('cam_offset_y',        'Camera offset Y  (m)',      -0.1,  0.1,  0.002, 0.0,  'float', CALIB_NODE),
+    ('cam_offset_z',        'Camera offset Z  (m)',      -0.1,  0.2,  0.002, 0.02, 'float', CALIB_NODE),
+    # Board geometry
+    ('board_z',             'Board Z  (m)',              -0.05, 0.2,  0.002, 0.02, 'float', CALIB_NODE),
+    ('board_edge_offset_x', 'Board edge offset X  (m)',  -0.1,  0.3,  0.002, 0.0,  'float', CALIB_NODE),
+    ('aruco_inner_offset',  'ArUco inner offset  (sq)',   0.0,  1.5,  0.005, 0.322,'float', CALIB_NODE),
+]
+
 ARM_JOINTS     = ['base_yaw', 'shoulder_roll', 'shoulder_pitch', 'elbow_pitch']
 GRIPPER_JOINTS = ['finger_1_joint', 'finger_2_joint', 'finger_3_joint']
 
@@ -144,8 +156,18 @@ class ArmTunerGUI(Node):
 
         self._vision_client = self.create_client(SetParameters, f'{VISION_NODE}/set_parameters')
         self._arm_client    = self.create_client(SetParameters, f'{ARM_NODE}/set_parameters')
+        self._calib_client  = self.create_client(SetParameters, f'{CALIB_NODE}/set_parameters')
 
-        self._clients = {VISION_NODE: self._vision_client, ARM_NODE: self._arm_client}
+        self._param_clients = {
+            VISION_NODE: self._vision_client,
+            ARM_NODE:    self._arm_client,
+            CALIB_NODE:  self._calib_client,
+        }
+
+        # Calibrate service client (std_srvs/Trigger)
+        from std_srvs.srv import Trigger as _Trigger
+        self._calibrate_srv_client = self.create_client(
+            _Trigger, f'{CALIB_NODE}/calibrate')
 
         self._slider_vars   = {}   # param_name → DoubleVar
         self._value_labels  = {}   # param_name → Label
@@ -216,29 +238,32 @@ class ArmTunerGUI(Node):
         nb = ttk.Notebook(self.root)
         nb.pack(fill='both', expand=True, padx=10, pady=8)
 
-        self._tab_vision    = self._make_tab(nb, 'Vision')
-        self._tab_detection = self._make_tab(nb, 'Detection')
-        self._tab_board     = self._make_tab(nb, 'Board Setup')
-        self._tab_movement  = self._make_tab(nb, 'Movement')
-        self._tab_standby   = self._make_tab(nb, 'Standby')
-        self._tab_move      = self._make_tab(nb, 'Move Arm')
-        self._tab_commands  = self._make_tab(nb, 'Commands')
-        self._tab_console   = self._make_tab(nb, 'Console')
+        self._tab_vision     = self._make_tab(nb, 'Vision')
+        self._tab_detection  = self._make_tab(nb, 'Detection')
+        self._tab_board      = self._make_tab(nb, 'Board Setup')
+        self._tab_movement   = self._make_tab(nb, 'Movement')
+        self._tab_standby    = self._make_tab(nb, 'Standby')
+        self._tab_calibrator = self._make_tab(nb, 'Calibrator')
+        self._tab_move       = self._make_tab(nb, 'Move Arm')
+        self._tab_commands   = self._make_tab(nb, 'Commands')
+        self._tab_console    = self._make_tab(nb, 'Console')
 
-        nb.add(self._tab_vision,    text='Vision')
-        nb.add(self._tab_detection, text='Detection')
-        nb.add(self._tab_board,     text='Board Setup')
-        nb.add(self._tab_movement,  text='Movement')
-        nb.add(self._tab_standby,   text='Standby')
-        nb.add(self._tab_move,      text='Move Arm')
-        nb.add(self._tab_commands,  text='Commands')
-        nb.add(self._tab_console,   text='Console')
+        nb.add(self._tab_vision,     text='Vision')
+        nb.add(self._tab_detection,  text='Detection')
+        nb.add(self._tab_board,      text='Board Setup')
+        nb.add(self._tab_movement,   text='Movement')
+        nb.add(self._tab_standby,    text='Standby')
+        nb.add(self._tab_calibrator, text='Calibrator')
+        nb.add(self._tab_move,       text='Move Arm')
+        nb.add(self._tab_commands,   text='Commands')
+        nb.add(self._tab_console,    text='Console')
 
         self._populate_vision()
         self._populate_detection()
         self._populate_board()
         self._populate_movement()
         self._populate_standby()
+        self._populate_calibrator()
         self._populate_move_arm()
         self._populate_commands()
         self._populate_console()
@@ -306,6 +331,48 @@ class ArmTunerGUI(Node):
                   cursor='hand2').pack(anchor='w', pady=4)
 
         self._reset_btn(f, STANDBY_SLIDERS)
+
+    def _populate_calibrator(self):
+        f = self._tab_calibrator
+        self._section(f, 'Camera-on-wrist offset (m)')
+        for cfg in CALIBRATOR_SLIDERS[:3]:
+            self._add_slider(f, cfg)
+        self._section(f, 'Board geometry')
+        for cfg in CALIBRATOR_SLIDERS[3:]:
+            self._add_slider(f, cfg)
+
+        tk.Frame(f, bg=BG, height=10).pack()
+
+        tk.Button(f, text='▶  Calibrate Now',
+                  command=self._trigger_calibration,
+                  bg='#2a4a1a', fg='white',
+                  font=('Courier', 10, 'bold'), bd=0, padx=16, pady=8,
+                  cursor='hand2').pack(anchor='w', pady=4)
+
+        self._calib_status_var = tk.StringVar(value='')
+        tk.Label(f, textvariable=self._calib_status_var,
+                 bg=BG, fg=GREEN, font=('Courier', 9)).pack(anchor='w', pady=(4, 0))
+
+        self._reset_btn(f, CALIBRATOR_SLIDERS)
+
+    def _trigger_calibration(self):
+        """Call ~/calibrate service on the calibrator node."""
+        from std_srvs.srv import Trigger as _Trigger
+        if not self._calibrate_srv_client.service_is_ready():
+            self._calib_status_var.set('Service not ready — is chess_coord_calibrator running?')
+            return
+        self._calib_status_var.set('Calibrating...')
+        req = _Trigger.Request()
+        future = self._calibrate_srv_client.call_async(req)
+        future.add_done_callback(self._on_calib_done)
+
+    def _on_calib_done(self, future):
+        try:
+            res = future.result()
+            msg = f'✓ {res.message}' if res.success else f'✗ {res.message}'
+        except Exception as e:
+            msg = f'Error: {e}'
+        self.root.after(0, lambda: self._calib_status_var.set(msg))
 
     def _populate_move_arm(self):
         f = self._tab_move
@@ -784,7 +851,7 @@ class ArmTunerGUI(Node):
     # ── Parameter client ──────────────────────────────────────────────────────
 
     def _set_param(self, name: str, value, kind: str, node: str):
-        client = self._clients.get(node)
+        client = self._param_clients.get(node)
         if client is None:
             return
         if not client.service_is_ready():

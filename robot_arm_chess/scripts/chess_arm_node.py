@@ -122,6 +122,7 @@ class ChessArmNode(Node):
 
         self._latest_joint_states = None   # updated by /joint_states subscriber
         self._piece_centroids     = {}     # sq → (world_x, world_y) from vision node
+        self._calibrated_coords   = {}     # sq → [world_x, world_y, world_z] from calibrator
 
         # Publishers
         self.arm_pub     = self.create_publisher(
@@ -147,6 +148,9 @@ class ChessArmNode(Node):
             String, '/chess/cmd', self.cmd_cb, 10)
         self.centroids_sub = self.create_subscription(
             String, '/chess/vision/piece_centroids', self._centroids_cb, 10)
+        self.calib_coords_sub = self.create_subscription(
+            String, '/chess/coord_calibrator/square_coords',
+            self._calibrated_coords_cb, 10)
 
         self.publish_status('IDLE')
         self.get_logger().info('Chess arm node ready')
@@ -267,7 +271,7 @@ class ChessArmNode(Node):
         count = 0
         for sq_name, model in self._piece_map.items():
             sq = chess.parse_square(sq_name)
-            x, y, _ = self.square_to_xyz(sq)
+            x, y, _ = self.square_to_xyz(sq, flip=True)
             self._teleport(model, x, y, self._piece_z(model))
             count += 1
         self.get_logger().info(f'[SIM] Returned {count} pieces to current board positions')
@@ -353,10 +357,22 @@ class ChessArmNode(Node):
     # ── Board geometry ─────────────────────────────────────────────────────────
     def square_to_xyz(self, square: chess.Square, z_offset: float = 0.0, flip: bool = None):
         """Convert a chess square to world XYZ.
+
+        Prefers calibrated coords from chess_coord_calibrator when available
+        (calibrated XY with z_offset applied on top of the calibrated base Z).
+        Falls back to tile-centre arithmetic from board_config if not yet calibrated.
+
         flip overrides self.board_flip when explicitly set (used by reset to
-        place pieces at their physical home squares regardless of arm orientation)."""
-        file = chess.square_file(square)
-        rank = chess.square_rank(square)
+        place pieces at their physical home squares regardless of arm orientation).
+        """
+        sq_name = chess.square_name(square)
+        if self._calibrated_coords and sq_name in self._calibrated_coords:
+            cx, cy, cz = self._calibrated_coords[sq_name]
+            return cx, cy, cz + z_offset
+
+        # Fallback: tile-centre arithmetic
+        file    = chess.square_file(square)
+        rank    = chess.square_rank(square)
         do_flip = self.board_flip if flip is None else flip
         if do_flip:
             x = self.ox + (7 - rank) * self.sq + self.sq / 2
@@ -700,6 +716,15 @@ class ChessArmNode(Node):
                 f'[CENTROIDS] received {len(self._piece_centroids)} centroids')
         except Exception as e:
             self.get_logger().warn(f'_centroids_cb: {e}')
+
+    def _calibrated_coords_cb(self, msg: String):
+        """Cache calibrated world XYZ coords from chess_coord_calibrator."""
+        try:
+            self._calibrated_coords = json.loads(msg.data)
+            self.get_logger().info(
+                f'[CALIB] Received calibrated coords for {len(self._calibrated_coords)} squares')
+        except Exception as e:
+            self.get_logger().warn(f'_calibrated_coords_cb: {e}')
 
     def publish_status(self, status: str):
         msg = String()

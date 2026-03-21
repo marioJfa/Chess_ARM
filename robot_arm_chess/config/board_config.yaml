@@ -14,3 +14,20 @@
     gripper_open: 0.0
     gripper_closed: 1.05
     move_duration: 3.0
+
+    # ── Coordinate calibrator params ─────────────────────────────────────────
+    # Board surface Z in world frame (usually same as origin_z)
+    board_z: 0.02
+
+    # Physical anchor: arm base front edge to board near edge (m)
+    # Arm base physically touches board — set to measured offset
+    board_edge_offset_x: 0.0
+
+    # Camera-on-wrist offset (matches URDF camera_joint xyz=0.04 0 0.02)
+    # Tune if physical camera position differs from URDF
+    cam_offset_x: 0.04
+    cam_offset_y: 0.0
+    cam_offset_z: 0.02
+
+    # ArUco inner corner offset from board playing-area edge (squares)
+    aruco_inner_offset: 0.322

@@ -139,6 +139,14 @@ def generate_launch_description():
         output='screen'
     )
 
+    chess_coord_calibrator = Node(
+        package='robot_arm_chess',
+        executable='chess_coord_calibrator.py',
+        name='chess_coord_calibrator',
+        parameters=[board_cfg, {'use_sim_time': True}],
+        output='screen'
+    )
+
     debug_camera = ExecuteProcess(
         cmd=['ros2', 'run', 'rqt_image_view', 'rqt_image_view',
              '/chess/vision/debug_image'],
@@ -158,5 +166,6 @@ def generate_launch_description():
         TimerAction(period=8.0,  actions=[chess_arm_node]),
         TimerAction(period=10.0, actions=[chess_gui]),
         TimerAction(period=10.0, actions=[chess_vision_node]),
+        TimerAction(period=10.0, actions=[chess_coord_calibrator]),
         TimerAction(period=12.0, actions=[debug_camera]),
     ])

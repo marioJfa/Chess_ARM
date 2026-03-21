@@ -9,6 +9,7 @@ install(PROGRAMS
   scripts/board_state_node.py
   scripts/chess_engine_node.py
   scripts/chess_arm_node.py
+  scripts/chess_coord_calibrator.py
   scripts/chess_gui.py
   scripts/chess_vision_node.py
   scripts/vision_calib_gui.py

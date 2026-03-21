@@ -120,6 +120,14 @@ def generate_launch_description():
         output='screen'
     )
 
+    chess_coord_calibrator = Node(
+        package='robot_arm_chess',
+        executable='chess_coord_calibrator.py',
+        name='chess_coord_calibrator',
+        parameters=[board_cfg, {'use_sim_time': False}],
+        output='screen'
+    )
+
     return LaunchDescription([
         robot_state_publisher,
         ros2_control_node,
@@ -131,4 +139,5 @@ def generate_launch_description():
         TimerAction(period=3.0,  actions=[chess_arm_node]),
         TimerAction(period=5.0,  actions=[chess_gui]),
         TimerAction(period=5.0,  actions=[chess_vision_node]),
+        TimerAction(period=5.0,  actions=[chess_coord_calibrator]),
     ])
