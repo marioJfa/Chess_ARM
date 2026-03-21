@@ -172,9 +172,19 @@ class ChessCoordCalibratorNode(Node):
 
     def _calibrate_cb(self, req: Trigger.Request, res: Trigger.Response):
         self.get_logger().info('[CALIB] ~/calibrate service called')
-        ok, msg       = self._run_calibration()
-        res.success   = ok
-        res.message   = msg
+        done   = threading.Event()
+        result = [False, 'timeout']
+
+        def _run():
+            ok, msg   = self._run_calibration()
+            result[0] = ok
+            result[1] = msg
+            done.set()
+
+        threading.Thread(target=_run, daemon=True).start()
+        done.wait(timeout=30.0)
+        res.success = result[0]
+        res.message = result[1]
         return res
 
     # ── Core calibration pipeline ─────────────────────────────────────────────

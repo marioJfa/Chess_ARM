@@ -368,7 +368,7 @@ class ChessArmNode(Node):
         sq_name = chess.square_name(square)
         if self._calibrated_coords and sq_name in self._calibrated_coords:
             cx, cy, cz = self._calibrated_coords[sq_name]
-            return cx, cy, cz + z_offset
+            return cx, cy, cz + z_offset  # flip is n/a — calibrated coords are absolute world positions
 
         # Fallback: tile-centre arithmetic
         file    = chess.square_file(square)
@@ -720,9 +720,11 @@ class ChessArmNode(Node):
     def _calibrated_coords_cb(self, msg: String):
         """Cache calibrated world XYZ coords from chess_coord_calibrator."""
         try:
-            self._calibrated_coords = json.loads(msg.data)
-            self.get_logger().info(
-                f'[CALIB] Received calibrated coords for {len(self._calibrated_coords)} squares')
+            data = json.loads(msg.data)
+            if len(data) != len(self._calibrated_coords):
+                self.get_logger().info(
+                    f'[CALIB] Calibrated coords updated: {len(data)} squares')
+            self._calibrated_coords = data
         except Exception as e:
             self.get_logger().warn(f'_calibrated_coords_cb: {e}')
 

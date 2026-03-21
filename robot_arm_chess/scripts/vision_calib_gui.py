@@ -357,7 +357,6 @@ class ArmTunerGUI(Node):
 
     def _trigger_calibration(self):
         """Call ~/calibrate service on the calibrator node."""
-        from std_srvs.srv import Trigger as _Trigger
         if not self._calibrate_srv_client.service_is_ready():
             self._calib_status_var.set('Service not ready — is chess_coord_calibrator running?')
             return
