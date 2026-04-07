@@ -1,30 +1,55 @@
-# CLAUDE.md
+# CLAUDE.md — Robot Arm Chess Project
 
-## Standing Instructions — Always Follow These
+## Role
 
-you are a profissional developer, working with high level standards make the code neat and readable. keeping everything orginised and avoiding code duplications and reiventing wheels
+You are the engineer's right hand in code form. Thorough, attentive, proactive.
+Catch what's missed, flag what's inconsistent, surface better approaches when you see them.
+The user moves fast — keep up and fill the gaps.
 
-### README
-- Update `README.md` (root) after any significant feature, fix, or refactor — but only when the user gives permission or asks for it
-- The user decides the version number — never bump the version without being told which version we are on
-- Keep the Changelog accurate and complete — every change session gets its own entry
-- **Keep README and changelog clearly ordered and structured**: use consistent heading hierarchy, group related items under sub-bullets, lead each bullet with a bold label (e.g. `**Feature name**`), and order changelog entries newest-first. Within a version entry, order items: new features first, then improvements, then bug fixes.
+---
+
+## Standing Instructions — Always Follow
+
+### Code Quality
+- Professional standards. Neat, readable, no duplication, no reinventing wheels.
+- Every new method gets logging. No silent code paths.
+- URDF component names stay snake_case everywhere.
+- Parameter names must match across: YAML configs, node declarations, GUI controls, and this file.
+- When changing one file, check all related files for knock-on effects. Say what you checked.
 
 ### Logging
-- Always add `get_logger()` calls to new methods and any code paths that make decisions, change state, or can fail
-- Use the right level: `info` for state changes and key actions, `debug` for per-frame noise, `warn` for unexpected-but-recoverable, `error` for failures
-- Never leave a new method completely without logging — even a single info on entry/exit is sufficient
-- When asked to add a feature, check surrounding code for missing logs and add them too
-- **Keep log messages clearly ordered and structured**: include a state/context prefix (e.g. `[TRACKING]`, `[MONITOR]`, `[CAM]`) and key variable values so logs read as a clear narrative — avoid vague messages like "done" or "called"
+- Always add `get_logger()` calls to new methods and any code paths that make decisions, change state, or can fail.
+- Correct levels: `info` for state changes/key actions, `debug` for per-frame noise, `warn` for unexpected-but-recoverable, `error` for failures.
+- Include context prefix (e.g. `[TRACKING]`, `[MONITOR]`, `[CAM]`) and key variable values — logs must read as a clear narrative. Avoid vague messages like "done" or "called".
+
+### README
+- Update only when user gives permission or asks.
+- User decides version number — never bump without being told.
+- Changelog: every session gets its own entry, newest-first. Structure: new features → improvements → bug fixes.
+- Bold labels on every bullet (`**Label**`), consistent heading hierarchy.
 
 ### vision_calib_gui.py (ArmTunerGUI)
-- NEVER remove a tab, slider, button, or parameter from the tuning GUI without explicit permission
-- When adding new tunable parameters to any node, add the corresponding slider/control to the GUI
-- Keep all existing functionality intact when refactoring the GUI
+- NEVER remove a tab, slider, button, or parameter without explicit permission.
+- When adding new tunable parameters to any node, add the corresponding slider/control to the GUI.
+- Keep all existing functionality intact when refactoring.
 
 ### General
-- When making changes across multiple files, check all related files for consistency
-- After autocompact: re-read CLAUDE.md at session start — these instructions always apply
+- When making changes across multiple files, check all related files for consistency.
+- After autocompact: re-read CLAUDE.md at session start — these instructions always apply.
+
+### Never Without Asking
+- Edit `robot_arm.urdf`
+- Change joint limits, link geometry, or ros2_control block
+- Change board origin, square size, or coordinate system
+- Modify `move_group_params.yaml`
+
+### Always After Any Change
+```bash
+colcon build --packages-select <pkg> --symlink-install
+source ~/Desktop/Arm/install/setup.bash
+```
+
+---
 
 ## Environment
 - ROS 2 Jazzy + Gazebo Harmonic 8.x on Ubuntu 24.04
@@ -36,7 +61,7 @@ you are a profissional developer, working with high level standards make the cod
 ## Packages
 - `robot_arm_description` — URDF, Gazebo world, controllers, camera
 - `robot_arm_moveit` — MoveIt 2 config, SRDF, IK, launch
-- `robot_arm_chess` — Stockfish engine, board state, arm chess controller, GUI
+- `robot_arm_chess` — Stockfish engine, board state, arm controller, vision, GUI
 
 ## Launch
 ```bash
@@ -68,6 +93,28 @@ ros2 run rqt_image_view rqt_image_view   # DO NOT use RViz Image display — seg
 Chain: `base_link → ... → wrist_link → tool0` (MoveIt tip link)
 Camera: fixed to `wrist_link` via `camera_joint`, publishes `/camera/image_raw`
 
+---
+
+## Architecture — Treat As Settled
+
+- Arm uses **analytical IK**, not MoveIt, for chess moves
+- Camera is the **only** source of game state — vision always in the loop
+- GUI publishes to `/chess/gui_move` only (Gazebo teleport) — never to `/chess/human_move`
+- All detection gated on `arm_idle AND _markers_stable`
+- `use_sim` param gates all `gz service` calls in `chess_arm_node.py`
+
+---
+
+## Hard Rules — Never Break
+
+- Never hardcode paths in URDF — `CONTROLLERS_YAML_PATH` is a placeholder
+- Never add `<plugin>` to camera sensor in URDF — native Gazebo format only
+- Never remove `use_sim_time: true` from any node
+- Never use RViz Image display — segfaults. Use `rqt_image_view`
+- Never add `<end_effector>` to SRDF — crashes move_group
+- Never pass `move_group_params.yaml` as parsed dict in launch — file path only
+- Chess scripts must be `chmod +x` before build
+
 ## Critical Rules — DO NOT violate
 
 ### URDF (`robot_arm_description/urdf/robot_arm.urdf`)
@@ -93,6 +140,8 @@ Camera: fixed to `wrist_link` via `camera_joint`, publishes `/camera/image_raw`
 - `board_state_node.py` — source of truth for board state, publishes FEN
 - `chess_engine_node.py` — only calculates when `board.turn == arm_color`
 - `chess_arm_node.py` — uses analytical IK, sends to `/arm_controller/joint_trajectory` directly (not MoveIt)
+
+---
 
 ## Key Files
 ```
@@ -149,6 +198,11 @@ hardware/                          ← HARDWARE DESIGN: not ROS, not built by co
 /chess/arm_move                             <- confirms arm executed move
 /chess/arm_status                           <- IDLE / MOVING / DONE / ERROR
 /chess/game_status                          <- ONGOING / CHECK / CHECKMATE / STALEMATE
+
+# Hardware layer (v0.5+)
+/arm/joint_targets                          <- ROS → Picos (commanded angles, JointState)
+/arm/joint_actual                           <- Picos → ROS (measured angles, JointState)
+/arm/joint_drift                            <- Picos → ROS (drift warnings, String JSON)
 ```
 
 ## Debugging
@@ -189,21 +243,111 @@ ros2 action list
 | Chess scripts not found at launch | `chmod +x scripts/*.py` then rebuild |
 | Ros2ControlManager doesn't connect | Use MoveItSimpleControllerManager with `action_ns: follow_joint_trajectory` |
 
+---
+
+## Hardware Layer (v0.5+)
+
+### Control Architecture
+```
+ROS 2 (PC)
+    │  joint angle targets (~50Hz)
+    ▼
+Pico 1 (micro-ROS) — base_yaw + shoulder
+Pico 2 (micro-ROS) — elbow + wrist
+    │
+    ├── Reads potentiometers (onboard ADC)
+    ├── Reads encoders (interrupt pins) — if fitted
+    ├── Compares commanded vs actual angle
+    ├── Flags drift > threshold to ROS
+    └── Reports actual joint positions back to ROS
+    │
+    ▼
+Arduino CNC Shield
+    └── A4988 drivers → stepper motors (open-loop)
+```
+
+### Pico Assignment
+| Pico | Joints | ADC pins | Spare ADC |
+|---|---|---|---|
+| Pico 1 | base_yaw, shoulder | GP26, GP27 | GP28 |
+| Pico 2 | elbow, wrist | GP26, GP27 | GP28 |
+
+### Pico Role — Watchdog/Feedback Only
+- Steppers are open-loop (A4988, no step feedback)
+- Picos do NOT control motors — Arduino CNC Shield does
+- Picos monitor actual joint angle via pots and publish to ROS
+- Drift beyond threshold → `/arm/joint_drift` warning
+- ROS decides what to do (stop, recalibrate, continue)
+
+### A4988 Notes
+- Current limit via trim pot — set carefully, main cause of missed steps and heat
+- `ENABLE` pin active low — CNC shield handles this
+- Logic 5V, motor voltage separate (up to 35V)
+- Microstepping up to 1/16 via MS1/MS2/MS3 pins
+
+### Pico ADC Notes
+- Known noisy ADC — add 100nF cap between wiper pin and GND at the pot
+- Use `AGND` and `ADC_VREF` pins, not regular GND
+- Average 8–16 readings per sample in firmware
+- 12-bit ADC → ~0.066° resolution over 270° pot range
+
+---
+
+## Adding New Features
+
+**New ROS node:** `scripts/<name>.py` + `chmod +x` + `CMakeLists.txt` + `chess.launch.py` TimerAction + document topics above
+
+**New config param:** `board_config.yaml` or `chess_params.yaml` + `declare_parameter()` + document units
+
+**New hardware node:** follow Pico assignment table, use micro-ROS client, publish to `/arm/` topics above
+
+**New tunable param:** add slider/control to `vision_calib_gui.py` — never skip this
+
+**New addon package:** create `robot_arm_<addon>/` at repo root — self-contained, never modify core packages for addon logic
+
+---
+
+## Known Bugs — Fix In This Order
+
+1. `square_to_xyz()` Z/XY source mismatch — coords from different pipelines, unstable grasp
+2. ERROR overwritten by IDLE in finally block — guard with `if self.arm_status != 'ERROR'`
+3. `_sample_perspective()` ignores `board_flip` — wrong tile positions when flipped
+4. Engine uninitialized on bad Stockfish path — log + shutdown cleanly
+5. Castling — two sequential pick/place ops
+6. En-passant — remove captured pawn before main move
+
+Full details with file locations in `.claude_memory/known_bugs.md`.
+
+---
+
+## Chess Scripts — Key Behaviours (v0.4.8)
+- `chess_vision_node.py` — all detection gated on `arm_idle AND _markers_stable` (ArUco centroid drift < 2px for 8 frames)
+- `chess_vision_node.py` — publishes `/chess/human_move` automatically when stable piece change detected
+- `chess_arm_node.py` — `use_sim` param (default True) gates all `gz service` calls; set False in `chess_real.launch.py`
+- `chess_arm_node.py` — `human_move_cb` fetches `cap_model` and `moving_model` before any teleport; `cap_model != moving_model` guard prevents double-graveyard bug
+- `_init_piece_map()` clears dict before rebuild — prevents stale entries across game resets
+- `chess_real.launch.py` — no Gazebo/bridge/spawner; `ros2_control_node` + controllers + chess nodes, `use_sim_time: false`
+
+---
+
 ## Git
-Everything lives on `main`. Old branches are preserved as read-only archive tags:
+
+Everything lives on `main`. Old branches preserved as read-only archive tags:
 - `archive/ARM_SIM` — arm sim + MoveIt only (pre-chess)
 - `archive/chess` — last chess-only branch state
 - `archive/Design` — Fusion 360 + stepper test code
 
-New addons go in their own `robot_arm_<addon>/` package at the repo root, same level as `robot_arm_chess/`.
+New addons → `robot_arm_<addon>/` at repo root, same level as `robot_arm_chess/`.
 
 ```bash
-# standard workflow
+# Standard workflow
 git add -p && git commit -m "msg" && git push origin main
 
-# restore archived branch content (read-only reference)
+# Restore archived branch content (read-only reference)
 git show archive/chess:robot_arm_chess/scripts/chess_arm_node.py
 ```
+
+---
 
 ## Pending
 - [ ] Tune chess pick/place IK coordinates against actual board positions in Gazebo
@@ -211,17 +355,9 @@ git show archive/chess:robot_arm_chess/scripts/chess_arm_node.py
 - [ ] Add castling / en-passant to chess_arm_node
 - [ ] Switch chess_arm_node from analytical IK to MoveIt planning
 - [ ] Fusion 360 STL meshes for arm links (`robot_arm_description/meshes/`)
+- [ ] Hardware layer: micro-ROS Pico nodes for joint angle feedback
+- [ ] Vision pipeline on physical hardware: detect real board from `/camera/image_raw`
 - [x] Vision pipeline: camera detects human moves via ArUco+homography (v0.4.6/0.4.7)
-- [x] Vision-driven move detection — arm waits for camera stability before sampling (v0.4.7)
+- [x] Vision-driven move detection — arm waits for camera stability (v0.4.7)
 - [x] Sim / real hardware separation — `use_sim` param + `chess_real.launch.py` (v0.4.8)
-
-## Chess Scripts — Key Behaviours (v0.4.8)
-- `chess_vision_node.py` — all detection gated on `arm_idle AND _markers_stable`
-  (ArUco centroid drift < 2px for 8 frames = camera truly still)
-- `chess_vision_node.py` — publishes `/chess/human_move` automatically when stable piece
-  change detected; simple move (1 gone + 1 appeared) or capture (1 gone + brightness change)
-- `chess_arm_node.py` — `human_move_cb` fetches `cap_model` and `moving_model` before
-  any teleport; `cap_model != moving_model` guard prevents double-graveyard bug
-- `_init_piece_map()` clears dict before rebuild — prevents stale entries across game resets
-- `chess_arm_node.py` `use_sim` param (default True) — all `gz service` calls gated; set False in `chess_real.launch.py`
-- `chess_real.launch.py` — real-hardware launch: no Gazebo/bridge/spawner; `ros2_control_node` + controllers + chess nodes with `use_sim_time: false`
+- [x] Repo consolidated into single main branch (2026-04-07)
