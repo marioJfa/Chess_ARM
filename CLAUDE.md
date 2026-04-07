@@ -96,13 +96,13 @@ Camera: fixed to `wrist_link` via `camera_joint`, publishes `/camera/image_raw`
 
 ## Key Files
 ```
-robot_arm_description/
-  urdf/robot_arm.urdf              # v0.4.2 — camera, 7 joints, ros2_control block (last changed v0.4.2)
+robot_arm_description/             ← CORE: physical robot definition
+  urdf/robot_arm.urdf              # v0.4.2 — camera, 7 joints, ros2_control block
   config/controllers.yaml          # arm_controller + gripper_controller + joint_state_broadcaster
   launch/gazebo.launch.py          # injects CONTROLLERS_YAML_PATH, spawns robot, loads controllers
   worlds/arm_world.sdf             # sensors plugin required for camera
 
-robot_arm_moveit/
+robot_arm_moveit/                  ← CORE: motion planning
   config/move_group_params.yaml    # PRIMARY — planning pipeline + controller manager
   config/robot_arm.srdf            # groups: arm (chain), gripper (joints)
   config/kinematics.yaml           # KDL solver, arm group only
@@ -110,7 +110,7 @@ robot_arm_moveit/
   launch/moveit.launch.py          # loads all configs, starts move_group + RViz
   scripts/arm_ik.py                # analytical IK + MoveIt Python client
 
-robot_arm_chess/
+robot_arm_chess/                   ← ADDON: chess application
   config/board_config.yaml         # origin=(0.20,-0.175,0.02), square=0.045m
   config/chess_params.yaml         # stockfish depth=10, arm plays black
   scripts/board_state_node.py      # /chess/board_state (FEN), /chess/last_move
@@ -122,6 +122,13 @@ robot_arm_chess/
   worlds/chess_world.sdf           # board + 32 cylinder pieces, sensors plugin included
   launch/chess.launch.py           # simulation: gazebo + bridge + controllers + chess nodes  (v0.4.8)
   launch/chess_real.launch.py      # real hardware: ros2_control + controllers + chess nodes  (v0.4.8 new)
+
+hardware/                          ← HARDWARE DESIGN: not ROS, not built by colcon
+  arm_calculator/                  # FastAPI web app — torque/geometry calculator, exports to Fusion 360
+  stepper_test/                    # Arduino CNC Shield + A4988 stepper test sketches
+  drawings/                        # SVG arm geometry reference (side view, top view)
+  params/                          # Fusion 360 exported parameters (CSV)
+  robot_arm_plan.md                # Original design plan document
 ```
 
 ## Topics
@@ -182,9 +189,21 @@ ros2 action list
 | Chess scripts not found at launch | `chmod +x scripts/*.py` then rebuild |
 | Ros2ControlManager doesn't connect | Use MoveItSimpleControllerManager with `action_ns: follow_joint_trajectory` |
 
-## Git Branches
-- `arm` — robot hardware only (URDF, sim, MoveIt). Switch here to modify the arm.
-- `chess` — chess system on top of arm. Merge from `arm` to get arm updates.
+## Git
+Everything lives on `main`. Old branches are preserved as read-only archive tags:
+- `archive/ARM_SIM` — arm sim + MoveIt only (pre-chess)
+- `archive/chess` — last chess-only branch state
+- `archive/Design` — Fusion 360 + stepper test code
+
+New addons go in their own `robot_arm_<addon>/` package at the repo root, same level as `robot_arm_chess/`.
+
+```bash
+# standard workflow
+git add -p && git commit -m "msg" && git push origin main
+
+# restore archived branch content (read-only reference)
+git show archive/chess:robot_arm_chess/scripts/chess_arm_node.py
+```
 
 ## Pending
 - [ ] Tune chess pick/place IK coordinates against actual board positions in Gazebo

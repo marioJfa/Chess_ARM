@@ -2,3 +2,12 @@
 /install
 /log
 commands
+# STL mesh files — large binaries, manage separately
+hardware/stls/
+*.stl
+*.STL
+
+# Python cache
+**/__pycache__/
+*.pyc
+.claude/
