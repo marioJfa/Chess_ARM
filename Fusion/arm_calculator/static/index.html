@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Arm Torque Calculator</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <h1>Robot Arm Torque &amp; Weight Calculator</h1>
+  <span class="sub">3DOF tendon-driven · live update</span>
+</header>
+
+<!-- LEFT: parameters -->
+<aside id="left-panel">
+
+  <div class="group">
+    <div class="group-title">Geometry (mm)</div>
+    <div class="field"><label>Link 1 length</label><input type="range" id="link1_length" min="50" max="400" step="5"><input type="number" id="link1_length_n" min="50" max="400"></div>
+    <div class="field"><label>Link 2 length</label><input type="range" id="link2_length" min="50" max="400" step="5"><input type="number" id="link2_length_n" min="50" max="400"></div>
+    <div class="field"><label>Link 3 length</label><input type="range" id="link3_length" min="20" max="200" step="5"><input type="number" id="link3_length_n" min="20" max="200"></div>
+    <div class="field"><label>Tube OD</label><input type="range" id="tube_od" min="10" max="50" step="1"><input type="number" id="tube_od_n" min="10" max="50"></div>
+    <div class="field"><label>Tube wall</label><input type="range" id="tube_wall" min="1" max="5" step="0.5"><input type="number" id="tube_wall_n" min="1" max="5"></div>
+  </div>
+
+  <div class="group">
+    <div class="group-title">Bearing / Hub (mm)</div>
+    <div class="field"><label>Shaft dia</label><input type="range" id="shaft_dia" min="4" max="20" step="1"><input type="number" id="shaft_dia_n" min="4" max="20"></div>
+    <div class="field"><label>Bearing OD</label><input type="range" id="bearing_od" min="10" max="50" step="1"><input type="number" id="bearing_od_n" min="10" max="50"></div>
+    <div class="field"><label>Bearing width</label><input type="range" id="bearing_width" min="3" max="20" step="1"><input type="number" id="bearing_width_n" min="3" max="20"></div>
+    <div class="field"><label>Hub OD</label><input type="range" id="hub_od" min="20" max="100" step="5"><input type="number" id="hub_od_n" min="20" max="100"></div>
+  </div>
+
+  <div class="group">
+    <div class="group-title">Mass (g)</div>
+    <div class="field"><label>Motor mass</label><input type="range" id="motor_mass" min="50" max="1000" step="10"><input type="number" id="motor_mass_n" min="50" max="1000"></div>
+    <div class="field"><label>Hub mass</label><input type="range" id="hub_mass" min="10" max="300" step="5"><input type="number" id="hub_mass_n" min="10" max="300"></div>
+    <div class="field"><label>Gripper mass</label><input type="range" id="gripper_mass" min="50" max="1000" step="10"><input type="number" id="gripper_mass_n" min="50" max="1000"></div>
+    <div class="field"><label>Payload mass</label><input type="range" id="payload_mass" min="0" max="2000" step="50"><input type="number" id="payload_mass_n" min="0" max="2000"></div>
+  </div>
+
+  <div class="group">
+    <div class="group-title">Pulley / Gear</div>
+    <div class="field"><label>Spool radius (mm)</label><input type="range" id="spool_radius" min="5" max="30" step="1"><input type="number" id="spool_radius_n" min="5" max="30"></div>
+    <div class="field"><label>Elbow pulley r (mm)</label><input type="range" id="elbow_pulley_radius" min="5" max="50" step="1"><input type="number" id="elbow_pulley_radius_n" min="5" max="50"></div>
+    <div class="field"><label>Wrist pulley r (mm)</label><input type="range" id="wrist_pulley_radius" min="5" max="50" step="1"><input type="number" id="wrist_pulley_radius_n" min="5" max="50"></div>
+    <div class="field"><label>Shoulder gear ratio</label><input type="range" id="shoulder_gear_ratio" min="1" max="20" step="0.5"><input type="number" id="shoulder_gear_ratio_n" min="1" max="20" step="0.5"></div>
+    <div class="field"><label>Elbow gear ratio</label><input type="range" id="elbow_gear_ratio" min="1" max="20" step="0.5"><input type="number" id="elbow_gear_ratio_n" min="1" max="20" step="0.5"></div>
+    <div class="field"><label>Wrist gear ratio</label><input type="range" id="wrist_gear_ratio" min="1" max="20" step="0.5"><input type="number" id="wrist_gear_ratio_n" min="1" max="20" step="0.5"></div>
+  </div>
+
+  <div class="group">
+    <div class="group-title">Pose (degrees)</div>
+    <div class="field"><label>Shoulder angle</label><input type="range" id="shoulder_angle" min="0" max="135" step="1"><input type="number" id="shoulder_angle_n" min="0" max="135"></div>
+    <div class="field"><label>Elbow angle</label><input type="range" id="elbow_angle" min="0" max="150" step="1"><input type="number" id="elbow_angle_n" min="0" max="150"></div>
+    <div class="field"><label>Wrist angle</label><input type="range" id="wrist_angle" min="-90" max="90" step="1"><input type="number" id="wrist_angle_n" min="-90" max="90"></div>
+  </div>
+
+  <div class="group">
+    <div class="group-title">Safety / Line</div>
+    <div class="field"><label>Line break (N)</label><input type="range" id="line_break_strength" min="50" max="500" step="5"><input type="number" id="line_break_strength_n" min="50" max="500"></div>
+    <div class="field"><label>Line safety factor</label><input type="range" id="line_safety_factor" min="1" max="5" step="0.1"><input type="number" id="line_safety_factor_n" min="1" max="5" step="0.1"></div>
+    <div class="field"><label>Torque safety factor</label><input type="range" id="torque_safety_factor" min="1" max="3" step="0.1"><input type="number" id="torque_safety_factor_n" min="1" max="3" step="0.1"></div>
+    <div class="field"><label>Motor target (Nm)</label><input type="range" id="motor_torque_target" min="0.1" max="10" step="0.1"><input type="number" id="motor_torque_target_n" min="0.1" max="10" step="0.1"></div>
+  </div>
+
+</aside>
+
+<!-- CENTER: SVG visualizer -->
+<main id="center">
+  <svg id="arm-svg" width="380" height="400" viewBox="-200 -380 400 420"></svg>
+  <div class="pose-readout">
+    <span>Shoulder <b id="pr-s">—</b>°</span>
+    <span>Elbow <b id="pr-e">—</b>°</span>
+    <span>Wrist <b id="pr-w">—</b>°</span>
+    <span>Reach <b id="pr-r">—</b> mm</span>
+  </div>
+</main>
+
+<!-- RIGHT: results -->
+<aside id="right-panel">
+
+  <div class="result-section">
+    <div class="result-title">Static Torques (Nm, with SF)</div>
+    <div class="metric"><span class="label">Shoulder</span><span><span class="value" id="r-ts">—</span><span class="unit">Nm</span></span></div>
+    <div class="metric"><span class="label">Elbow</span><span><span class="value" id="r-te">—</span><span class="unit">Nm</span></span></div>
+    <div class="metric"><span class="label">Wrist</span><span><span class="value" id="r-tw">—</span><span class="unit">Nm</span></span></div>
+  </div>
+
+  <div class="result-section">
+    <div class="result-title">Required Motor Torque (Nm)</div>
+    <div class="metric"><span class="label"><span class="dot" id="dot-ms"></span>Shoulder</span><span><span class="value" id="r-ms">—</span><span class="unit">Nm</span></span></div>
+    <div class="metric"><span class="label"><span class="dot" id="dot-me"></span>Elbow</span><span><span class="value" id="r-me">—</span><span class="unit">Nm</span></span></div>
+    <div class="metric"><span class="label"><span class="dot" id="dot-mw"></span>Wrist</span><span><span class="value" id="r-mw">—</span><span class="unit">Nm</span></span></div>
+  </div>
+
+  <div class="result-section">
+    <div class="result-title">Cable Tension (N)</div>
+    <div class="metric"><span class="label">Limit (break/SF)</span><span><span class="value" id="r-cl">—</span><span class="unit">N</span></span></div>
+    <div class="metric"><span class="label"><span class="dot" id="dot-ce"></span>Elbow cable</span><span><span class="value" id="r-ce">—</span><span class="unit">N</span></span></div>
+    <div class="metric"><span class="label"><span class="dot" id="dot-cw"></span>Wrist cable</span><span><span class="value" id="r-cw">—</span><span class="unit">N</span></span></div>
+  </div>
+
+  <div class="result-section">
+    <div class="result-title">Gear Ratio Recommendations</div>
+    <div class="metric"><span class="label">Shoulder</span><span><span class="value" id="r-grs">—</span><span class="unit">:1</span></span></div>
+    <div class="metric"><span class="label">Elbow</span><span><span class="value" id="r-gre">—</span><span class="unit">:1</span></span></div>
+    <div class="metric"><span class="label">Wrist</span><span><span class="value" id="r-grw">—</span><span class="unit">:1</span></span></div>
+  </div>
+
+  <div class="result-section">
+    <div class="result-title">Required Motor RPM (@ 60°/s)</div>
+    <div class="metric"><span class="label">Shoulder</span><span><span class="value" id="r-rpms">—</span><span class="unit">rpm</span></span></div>
+    <div class="metric"><span class="label">Elbow</span><span><span class="value" id="r-rpme">—</span><span class="unit">rpm</span></span></div>
+    <div class="metric"><span class="label">Wrist</span><span><span class="value" id="r-rpmw">—</span><span class="unit">rpm</span></span></div>
+  </div>
+
+  <div class="result-section">
+    <div class="result-title">Mass Breakdown</div>
+    <table class="mass-table">
+      <thead><tr><th>Component</th><th>g</th></tr></thead>
+      <tbody id="mass-tbody"></tbody>
+    </table>
+  </div>
+
+</aside>
+
+<footer>
+  <span id="status-msg" style="font-size:11px;color:#475569;margin-right:auto"></span>
+  <button class="secondary" onclick="resetDefaults()">Reset Defaults</button>
+  <button onclick="exportCSV()">Export Fusion 360 CSV</button>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

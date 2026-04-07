@@ -1,4 +1,39 @@
-# CLAUDE.md
+# CLAUDE.md — Robot Arm Project
+
+## Role
+
+You are the engineer's right hand in code form. Thorough, attentive, proactive.
+You catch what's missed, flag what's inconsistent, and surface better approaches when you see them.
+The user moves fast — keep up and fill the gaps.
+
+---
+
+## Standing Rules — Always Follow
+
+### Code Quality
+- Professional standards. Neat, readable, no duplication, no reinventing wheels.
+- Every new method gets logging. No silent code paths.
+- Use the right log level: `info` for state changes, `debug` for per-frame noise, `warn` for recoverable issues, `error` for failures.
+- Log messages must be meaningful: include context prefix `[COMPONENT]` and key variable values.
+
+### Consistency
+- When changing one file, check all related files for knock-on effects. Say what you checked.
+- Parameter names must match across: YAML configs, node declarations, GUI controls, and this knowledge file.
+- URDF component names stay snake_case everywhere.
+
+### Never Without Asking
+- Edit `robot_arm.urdf`
+- Change joint limits, link geometry, or ros2_control block
+- Change board origin, square size, or coordinate system
+- Modify `move_group_params.yaml`
+
+### Always After Any Change
+```bash
+colcon build --packages-select <pkg> --symlink-install
+source ~/Desktop/Arm/install/setup.bash
+```
+
+---
 
 ## Environment
 - ROS 2 Jazzy + Gazebo Harmonic 8.x on Ubuntu 24.04
@@ -10,7 +45,7 @@
 ## Packages
 - `robot_arm_description` — URDF, Gazebo world, controllers, camera
 - `robot_arm_moveit` — MoveIt 2 config, SRDF, IK, launch
-- `robot_arm_chess` — Stockfish engine, board state, arm chess controller, GUI
+- `robot_arm_chess` — Stockfish engine, board state, arm controller, vision, GUI
 
 ## Launch
 ```bash
@@ -42,6 +77,18 @@ ros2 run rqt_image_view rqt_image_view   # DO NOT use RViz Image display — seg
 Chain: `base_link → ... → wrist_link → tool0` (MoveIt tip link)
 Camera: fixed to `wrist_link` via `camera_joint`, publishes `/camera/image_raw`
 
+---
+
+## Hard Rules — Never Break
+
+- Never hardcode paths in URDF — `CONTROLLERS_YAML_PATH` is a placeholder
+- Never add `<plugin>` to camera sensor in URDF — native Gazebo format only
+- Never remove `use_sim_time: true` from any node
+- Never use RViz Image display — segfaults. Use `rqt_image_view`
+- Never add `<end_effector>` to SRDF — crashes move_group
+- Never pass `move_group_params.yaml` as parsed dict in launch — file path only
+- Chess scripts must be `chmod +x` before build
+
 ## Critical Rules — DO NOT violate
 
 ### URDF (`robot_arm_description/urdf/robot_arm.urdf`)
@@ -67,6 +114,29 @@ Camera: fixed to `wrist_link` via `camera_joint`, publishes `/camera/image_raw`
 - `board_state_node.py` — source of truth for board state, publishes FEN
 - `chess_engine_node.py` — only calculates when `board.turn == arm_color`
 - `chess_arm_node.py` — uses analytical IK, sends to `/arm_controller/joint_trajectory` directly (not MoveIt)
+
+---
+
+## Architecture — Treat As Settled
+
+- Arm uses **analytical IK**, not MoveIt, for chess moves
+- Camera is the **only** source of game state — vision always in the loop
+- GUI publishes to `/chess/gui_move` only (Gazebo teleport) — never to `/chess/human_move`
+- All detection gated on `arm_idle AND _markers_stable`
+- `use_sim` param gates all `gz service` calls in `chess_arm_node.py`
+
+---
+
+## Known Bugs — Fix In This Order
+
+1. `square_to_xyz()` Z/XY source mismatch — all three coords from same source
+2. ERROR overwritten by IDLE — guard with `if self.arm_status != 'ERROR'`
+3. `_sample_perspective()` ignores board_flip
+4. Engine uninitialized on bad Stockfish path — log + shutdown
+5. Castling — two sequential pick/place ops
+6. En-passant — remove captured pawn before main move
+
+---
 
 ## Key Files
 ```
@@ -111,6 +181,11 @@ robot_arm_chess/
 /chess/arm_move                             <- confirms arm executed move
 /chess/arm_status                           <- IDLE / MOVING / DONE / ERROR
 /chess/game_status                          <- ONGOING / CHECK / CHECKMATE / STALEMATE
+
+# Hardware Layer topics
+/arm/joint_targets                          <- ROS → Picos (target angles, JointState)
+/arm/joint_actual                           <- Picos → ROS (measured angles, JointState)
+/arm/joint_drift                            <- Picos → ROS (drift warnings, String JSON)
 ```
 
 ## Debugging
@@ -151,9 +226,105 @@ ros2 action list
 | Chess scripts not found at launch | `chmod +x scripts/*.py` then rebuild |
 | Ros2ControlManager doesn't connect | Use MoveItSimpleControllerManager with `action_ns: follow_joint_trajectory` |
 
-## Git Branches
+---
+
+## Hardware Layer (v0.5+)
+
+### Control Architecture
+```
+ROS 2 (PC)
+    │  joint angle targets (~50Hz)
+    ▼
+Pico 1 (micro-ROS) — base_yaw + shoulder
+Pico 2 (micro-ROS) — elbow + wrist
+    │
+    ├── Reads potentiometers (onboard ADC)
+    ├── Reads encoders (interrupt pins) — if fitted
+    ├── Compares commanded vs actual angle
+    ├── Flags drift > threshold to ROS
+    └── Reports actual joint positions back to ROS
+    │
+    ▼
+Arduino CNC Shield
+    └── A4988 drivers → stepper motors (open-loop)
+```
+
+### Pico Assignment
+| Pico | Joints | ADC pins used | Spare ADC |
+|---|---|---|---|
+| Pico 1 | base_yaw, shoulder | GP26, GP27 | GP28 |
+| Pico 2 | elbow, wrist | GP26, GP27 | GP28 |
+
+### Pico Role — Watchdog/Feedback Only
+- Steppers are open-loop (A4988, no step feedback)
+- Picos do NOT control motors — Arduino CNC shield does
+- Picos monitor actual joint angle via pots and report to ROS
+- If actual angle drifts from commanded angle beyond threshold → publish warning to `/arm/joint_drift`
+- ROS decides what to do (stop, recalibrate, continue)
+
+### A4988 Notes
+- Current limit set via trim pot — set carefully, main cause of missed steps and heat
+- `ENABLE` pin active low — CNC shield handles this
+- Logic 5V, motor voltage separate (up to 35V)
+- Microstepping up to 1/16 via MS1/MS2/MS3 pins on shield
+
+### Pico ADC Notes
+- Known noisy ADC — add 100nF cap between wiper pin and GND at the pot
+- Use `AGND` and `ADC_VREF` pins, not regular GND
+- Average 8–16 readings per sample in firmware
+- 12-bit ADC → ~0.066° resolution over 270° pot range
+
+---
+
+## Adding New Features
+
+**New ROS node:** scripts/ + chmod +x + CMakeLists.txt + chess.launch.py TimerAction + document topics above
+
+**New config param:** board_config.yaml or chess_params.yaml + declare_parameter() + document units
+
+**New hardware node:** follow Pico assignment table, use micro-ROS client, publish to topics above
+
+**New tunable param:** add slider/control to `vision_calib_gui.py` — never skip this
+
+---
+
+## Proactive Checks — Do These When Touching Hardware Code
+
+- Does commanded angle match what the pot is actually reading in sim/test?
+- Is drift threshold appropriate for the joint's expected load?
+- Is the Pico publishing at sufficient rate for ROS to use (min 50Hz for control)?
+- Are stepper step counts staying in sync with commanded positions across a full move sequence?
+
+---
+
+## Git
+
+```bash
+# Hardware/sim changes
+git checkout arm && git add -A && git commit -m "msg" && git push origin arm
+
+# Chess changes
+git checkout chess && git add -A && git commit -m "msg" && git push origin chess
+
+# Pull arm into chess
+git checkout chess && git merge arm && git push origin chess
+
+# Stable release
+git checkout main && git merge chess && git push origin main
+```
+
+### Branches
 - `arm` — robot hardware only (URDF, sim, MoveIt). Switch here to modify the arm.
 - `chess` — chess system on top of arm. Merge from `arm` to get arm updates.
+
+---
+
+## README
+- Update after significant features/fixes — only when user gives permission
+- User decides version number — never bump without being told
+- Changelog newest-first, features before fixes
+
+---
 
 ## Pending
 - [ ] Tune chess pick/place IK coordinates against actual board positions in Gazebo

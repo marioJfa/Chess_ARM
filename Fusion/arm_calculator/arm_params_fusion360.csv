@@ -1,0 +1,86 @@
+name,unit,expression,value,comment,favorite
+tube_radius,mm,11,11,Physical tube radius - given spec,true
+tube_od,mm,tube_radius * 2,22,Outer diameter of metal pipe,true
+tube_wall,mm,2,2,Pipe wall thickness - 2-3mm range start at 2mm,false
+tube_id,mm,tube_od - (tube_wall * 2),18,Inner bore diameter,true
+link1_length,mm,200,200,Shoulder joint to elbow joint,true
+link2_length,mm,180,180,Elbow joint to wrist joint,true
+link3_length,mm,80,80,Wrist joint to gripper interface face,true
+connector_wall,mm,3.5,3.5,Min printed wall for M3 insert clearance,false
+connector_clearance,mm,0.3,0.3,Slip fit over tube OD - tune after first print,false
+connector_socket_depth,mm,25,25,Tube insertion depth into socket,false
+connector_socket_od,mm,tube_od + connector_clearance + (connector_wall * 2),29.3,Outer diameter of printed socket,false
+centering_boss_dia,mm,12,12,Locating boss on joint interface face,false
+centering_boss_height,mm,2.5,2.5,Raised boss height above interface face,false
+bolt_circle_dia,mm,30,30,M3 bolt circle PCD on interface face,false
+interface_bolt_count,,4,4,M3 bolts on interface face at 90deg spacing,false
+rib_thickness,mm,2.5,2.5,Longitudinal stiffening ribs on socket OD,false
+rib_height,mm,3,3,Outward rib projection from socket OD surface,false
+bolt_dia,mm,3,3,M3 standard throughout entire arm,false
+bolt_head_dia,mm,5.5,5.5,M3 cap head OD,false
+bolt_hole_clearance,mm,3.4,3.4,Clearance hole diameter for M3,false
+insert_od,mm,4.5,4.5,Plastic M3 insert OD - verify with supplier,false
+insert_depth,mm,6,6,Plastic M3 insert seated depth,false
+insert_hole_dia,mm,4.2,4.2,Press hole for M3 insert - verify with supplier,false
+setscrew_count,,3,3,Radial set screws per socket at 120deg,false
+setscrew_dia,mm,3,3,M3 set screws biting into tube OD,false
+setscrew_depth_from_opening,mm,connector_socket_depth / 2,12.5,Set screw centerline from socket opening,false
+tendon_dia,mm,0.5,0.5,Fishing line diameter - measure actual before finalizing,false
+ptfe_liner_id,mm,2,2,PTFE tube inner bore per line,false
+ptfe_liner_od,mm,4,4,PTFE tube outer diameter,false
+ptfe_liner_count,,4,4,One liner per bore line - wrist fwd/bck + gripper A/B,false
+bore_channel_spacing,mm,6,6,Center to center between adjacent PTFE liners,false
+bore_center_clearance,mm,tube_id - (bore_channel_spacing + ptfe_liner_od),8,Clear space at bore center after 4 liners,false
+guide_clip_od,mm,tube_od + (connector_wall * 2),29,External line guide clip OD gripping Link1 tube,false
+guide_eyelet_id,mm,2,2,Eyelet hole ID for external elbow tendon line,false
+guide_eyelet_offset,mm,5,5,Eyelet centerline offset from tube OD surface,false
+guide_spacing_along_link,mm,50,50,One guide clip every 50mm along Link1,false
+guide_count_link1,,4,4,Approx link1_length / guide_spacing,false
+pulley_radius,mm,15,15,Redirect pulley radius at elbow joint,true
+pulley_width,mm,5,5,Pulley groove width,false
+pulley_groove_depth,mm,1.5,1.5,Groove depth to retain tendon line,false
+pulley_wall,mm,3,3,Printed pulley wall thickness,false
+pulley_bore,mm,bolt_dia,3,M3 shaft through pulley center,false
+spool_dia,mm,22,22,Bidirectional motor spool diameter in base,true
+spool_width,mm,12,12,Total spool flanged width both grooves,false
+spool_groove_width,mm,(spool_width - 3) / 2,4.5,Width of each groove section on spool,false
+spool_flange_dia,mm,spool_dia + 8,30,Outer flange OD to retain line,false
+spool_wall,mm,3,3,Printed spool wall thickness,false
+spool_groove_pitch,mm,1.5,1.5,Helical groove pitch - prevents line overlap,false
+spool_groove_count,,2,2,Two grooves per spool wound in opposite directions,false
+spool_groove_separation,mm,3,3,Axial gap between the two groove sections,false
+base_limit_deg,deg,340,340,Base yaw travel - 20deg reserved for cable clearance,true
+shoulder_limit_neg_deg,deg,-10,-10,Shoulder droop below horizontal,true
+shoulder_limit_pos_deg,deg,150,150,Shoulder max upward pitch,true
+elbow_limit_neg_deg,deg,0,0,Elbow full extension,true
+elbow_limit_pos_deg,deg,150,150,Elbow max fold,true
+wrist_limit_neg_deg,deg,-90,-90,Wrist down,true
+wrist_limit_pos_deg,deg,90,90,Wrist up,true
+shoulder_motor_mount_wall,mm,4,4,Printed housing wall around shoulder motor at joint,false
+motor_total_base,,3,3,Yaw + Elbow bidirectional + Wrist bidirectional,false
+motor_total_shoulder,,1,1,Shoulder pitch direct drive at joint,false
+motor_gripper_count,,2,2,One per gripper DOF - location TBD,false
+motor_total_all,,6,6,Base(3) + Shoulder(1) + Gripper(2),true
+motor_placeholder_width,mm,42,42,NEMA17 footprint placeholder - update when motor chosen,false
+motor_placeholder_depth,mm,42,42,NEMA17 footprint placeholder,false
+motor_placeholder_height,mm,48,48,NEMA17 height placeholder,false
+motor_shaft_dia,mm,5,5,Placeholder shaft diameter,false
+base_od,mm,130,130,Base outer diameter - revisit after gripper motor location decided,true
+base_height,mm,120,120,Total base height including routing overhead,true
+base_wall,mm,4,4,Outer shell wall thickness,false
+base_floor_thickness,mm,5,5,Bottom plate thickness,false
+base_top_thickness,mm,6,6,Top plate - arm load bearing,false
+base_inner_routing_zone,mm,30,30,Vertical space above motors for line routing,false
+base_motor_bay_count,,3,3,Confirmed base motors - update if gripper motors added,false
+base_yaw_bearing_od,mm,50,50,Lazy susan or thrust bearing OD,false
+base_yaw_bearing_id,mm,35,35,Inner bore of base rotation bearing,false
+cable_exit_port_count,,6,6,Ports at top of base - 2 external elbow + 4 bore,false
+cable_exit_port_dia,mm,ptfe_liner_od + 2,6,Port ID fits PTFE liner OD with clearance,false
+panel_connector_count,,3,3,Panel-mount connectors on base exterior face,false
+panel_face_width,mm,60,60,Dedicated electrical panel face width on base,false
+module_bolt_pattern_dia,mm,base_od - 20,110,Bolt circle for swappable module face plates,false
+module_bolt_count,,6,6,M3 bolts on module face plate ring,false
+din_rail_length,mm,80,80,Internal DIN rail for controller board mounting,false
+urdf_link1_m,mm,link1_length / 1000,0.2,Mirrors link1_length in meters for URDF,false
+urdf_link2_m,mm,link2_length / 1000,0.18,Mirrors link2_length in meters for URDF,false
+urdf_link3_m,mm,link3_length / 1000,0.08,Mirrors link3_length in meters for URDF,false
